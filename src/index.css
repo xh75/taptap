@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+/* La borne occupe tout l'ecran, jamais de scroll parasite. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #0a0118;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
