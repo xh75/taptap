@@ -47,7 +47,7 @@ Palette FIXE (aucun mode clair, aucun thème alternatif — le noir profond est 
 
 - **Void (`#0a0118`)** — l'écran, le vide d'où naît le visuel. Le fond de tout rendu.
 - **Cabinet (`#05010d`) / Panel (`#120826`)** — la coque de la borne autour de l'écran ; dégradé sombre qui isole l'écran du reste du monde.
-- **Magenta (`#ff2e97`)** — la présence : nom du stage courant, ondes SVG, bordure du stage actif. La couleur « toi, ici, maintenant ».
+- **Magenta (`#ff2e97`)** — la présence : nom du stage courant, ondes SVG, onde de tap (WAVEFORM). La couleur « toi, ici, maintenant ». (La bordure du stage *actif* prend la couleur du stage — voir Components.)
 - **Cyan (`#00f0ff`)** — le mouvement : jauge en charge, boot, couronnes ambiantes du mandala.
 - **Amber (`#ffd600`)** — la trace : le SCORE et lui seul. Chiffres qui s'accumulent.
 - **Green (`#39ff14`)** — le franchissement : FLUX plein, flash de seuil, combos, focus clavier, déblocage. La couleur de la bascule.

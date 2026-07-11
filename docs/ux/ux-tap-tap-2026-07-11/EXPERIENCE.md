@@ -35,7 +35,7 @@ Microcopie canonique (le code suit ce tableau — il fait foi) :
 | Franchissement de seuil | `SEUIL` | `threshold`, {colors.green} |
 | Seuil → MANDALA | sous-titre : `les couronnes répondent` | `oracle`, blanc |
 | Seuil → LIQUID | sous-titre : `le flux profond s'ouvre` | `oracle`, blanc |
-| Repli WebGL | `le flux profond ne répond pas — retour aux couronnes` | `oracle`, {colors.amber} |
+| Repli WebGL | `le flux profond ne répond pas — retour aux couronnes` | `oracle`, {colors.ink-60} (l'ambre reste réservé au score) |
 | Contemplation (tout ouvert) | `plus rien à franchir. reste, ou recommence.` | `oracle`, {colors.ink-60} |
 | Labels HUD | `STAGE` · `SCORE` · `HIGH` · `FLUX` · `x… COMBO` | `hud-label`, technique |
 

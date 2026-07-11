@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -10,16 +11,13 @@ import {
 /* ============================================================================
  * TAP·TAP — borne d'arcade generative psychedelique
  * Le geste central est le TAP : chaque tap pulse le visuel au point touche et
- * remplit la jauge FLOW. FLOW plein => STAGE UP => nouveau moteur de rendu.
+ * remplit la jauge FLUX. FLUX plein => SEUIL => nouveau moteur de rendu.
  *   Stage 1 WAVEFORM  -> SVG        (ondes & interferences)
  *   Stage 2 MANDALA   -> Canvas 2D  (fractales radiales, composite lighter)
  *   Stage 3 LIQUID    -> WebGL      (fbm 6 octaves, onde de choc au tap)
  * Composant autonome : styles inline, aucune dependance externe.
  * ==========================================================================*/
 
-// ---------------------------------------------------------------------------
-// Palette psyche fixe (contraste calibre, esthetique CRT/neon)
-// ---------------------------------------------------------------------------
 const PALETTE = {
   void: '#0a0118',
   magenta: '#ff2e97',
@@ -28,7 +26,7 @@ const PALETTE = {
   green: '#39ff14',
 } as const
 
-// Meme palette en composantes 0..1 pour le shader WebGL.
+// Meme palette en composantes 0..1 pour le shader WebGL et les sprites Canvas.
 const RGB = {
   magenta: [1.0, 0.18, 0.592] as [number, number, number],
   cyan: [0.0, 0.941, 1.0] as [number, number, number],
@@ -51,11 +49,11 @@ const STAGES: StageDef[] = [
 ]
 
 // Reglages de jeu -----------------------------------------------------------
-const FLOW_MAX = 100
-const TAP_GAIN_BASE = 7 // points de FLOW par tap (avant bonus combo)
+const FLUX_MAX = 100
+const TAP_GAIN_BASE = 7 // points de FLUX par tap (avant bonus combo)
 const COMBO_WINDOW = 700 // ms max entre deux taps pour enchainer le combo
 const DECAY_PER_SEC = 9 // vitesse de descente de la jauge au repos
-const FLASH_MS = 950 // duree du flash STAGE UP!
+const FLASH_MS = 950 // duree du flash SEUIL
 const STORAGE_KEY = 'taptap.save.v1'
 
 // ---------------------------------------------------------------------------
@@ -73,7 +71,7 @@ function loadSave(): SaveData {
       const p = JSON.parse(raw) as Partial<SaveData>
       return {
         highScore: Math.max(0, Number(p.highScore) || 0),
-        maxUnlocked: Math.min(3, Math.max(1, Number(p.maxUnlocked) || 1)),
+        maxUnlocked: Math.min(3, Math.max(1, Math.round(Number(p.maxUnlocked) || 1))),
       }
     }
   } catch {
@@ -91,7 +89,7 @@ function persistSave(data: SaveData) {
 }
 
 // ---------------------------------------------------------------------------
-// prefers-reduced-motion : vitesse d'animation reduite a x0.3 si demande.
+// prefers-reduced-motion : vitesse reduite + animations non essentielles coupees.
 // ---------------------------------------------------------------------------
 function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false)
@@ -118,8 +116,7 @@ interface StageProps {
 
 /* ==========================================================================
  * STAGE 1 — WAVEFORM (SVG)
- * Lignes sinusoidales dephasees + ripples de tap. Rendu via state React
- * (leger : quelques lignes, cout GPU quasi nul).
+ * Lignes sinusoidales dephasees + ondes de tap. Rendu via state React.
  * ========================================================================*/
 interface Ripple {
   id: number
@@ -128,243 +125,253 @@ interface Ripple {
   born: number
 }
 
-const WaveformStage = forwardRef<StageHandle, StageProps>(function WaveformStage(
-  { speed },
-  ref,
-) {
-  const [phase, setPhase] = useState(0)
-  const [ripples, setRipples] = useState<Ripple[]>([])
-  const idRef = useRef(0)
+const WaveformStage = memo(
+  forwardRef<StageHandle, StageProps>(function WaveformStage({ speed }, ref) {
+    const [phase, setPhase] = useState(0)
+    const [ripples, setRipples] = useState<Ripple[]>([])
+    const idRef = useRef(0)
 
-  useImperativeHandle(ref, () => ({
-    tap: (nx, ny) => {
-      const r: Ripple = { id: idRef.current++, x: nx * 1000, y: ny * 1000, born: performance.now() }
-      setRipples((rs) => [...rs.slice(-11), r])
-    },
-  }))
+    useImperativeHandle(ref, () => ({
+      tap: (nx, ny) => {
+        const r: Ripple = { id: idRef.current++, x: nx * 1000, y: ny * 1000, born: performance.now() }
+        setRipples((rs) => [...rs.slice(-11), r])
+      },
+    }))
 
-  // Horloge d'animation (rAF) : avance la phase + purge les ripples expires.
-  useEffect(() => {
-    let raf = 0
-    let last = performance.now()
-    const loop = (now: number) => {
-      const dt = (now - last) / 1000
-      last = now
-      setPhase((p) => p + dt * speed * 1.6)
-      setRipples((rs) => rs.filter((r) => now - r.born < 1200))
+    useEffect(() => {
+      let raf = 0
+      let last = performance.now()
+      const loop = (now: number) => {
+        const dt = (now - last) / 1000
+        last = now
+        setPhase((p) => p + dt * speed * 1.6)
+        setRipples((rs) => rs.filter((r) => now - r.born < 1200))
+        raf = requestAnimationFrame(loop)
+      }
       raf = requestAnimationFrame(loop)
+      return () => cancelAnimationFrame(raf)
+    }, [speed])
+
+    const lines = [
+      { freq: 0.012, amp: 90, color: PALETTE.magenta, off: 0 },
+      { freq: 0.018, amp: 60, color: PALETTE.cyan, off: 1.1 },
+      { freq: 0.009, amp: 130, color: PALETTE.magenta, off: 2.3 },
+      { freq: 0.024, amp: 45, color: PALETTE.cyan, off: 0.6 },
+      { freq: 0.015, amp: 100, color: PALETTE.green, off: 3.0 },
+    ]
+
+    const buildPath = (freq: number, amp: number, off: number) => {
+      let d = ''
+      for (let x = 0; x <= 1000; x += 20) {
+        const y =
+          500 +
+          amp * Math.sin(x * freq + phase + off) +
+          amp * 0.35 * Math.sin(x * freq * 2.3 - phase * 1.4 + off)
+        d += (x === 0 ? 'M' : 'L') + x.toFixed(0) + ' ' + y.toFixed(1) + ' '
+      }
+      return d
     }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
-  }, [speed])
 
-  const lines = [
-    { freq: 0.012, amp: 90, color: PALETTE.magenta, off: 0 },
-    { freq: 0.018, amp: 60, color: PALETTE.cyan, off: 1.1 },
-    { freq: 0.009, amp: 130, color: PALETTE.magenta, off: 2.3 },
-    { freq: 0.024, amp: 45, color: PALETTE.cyan, off: 0.6 },
-    { freq: 0.015, amp: 100, color: PALETTE.green, off: 3.0 },
-  ]
+    const now = performance.now()
 
-  const buildPath = (freq: number, amp: number, off: number) => {
-    let d = ''
-    for (let x = 0; x <= 1000; x += 20) {
-      const y =
-        500 +
-        amp * Math.sin(x * freq + phase + off) +
-        amp * 0.35 * Math.sin(x * freq * 2.3 - phase * 1.4 + off)
-      d += (x === 0 ? 'M' : 'L') + x.toFixed(0) + ' ' + y.toFixed(1) + ' '
-    }
-    return d
-  }
-
-  const now = performance.now()
-
-  return (
-    <svg
-      viewBox="0 0 1000 1000"
-      preserveAspectRatio="none"
-      width="100%"
-      height="100%"
-      style={{ display: 'block', background: PALETTE.void }}
-      aria-hidden="true"
-    >
-      <g style={{ mixBlendMode: 'screen' }}>
-        {lines.map((l, i) => (
-          <path
-            key={i}
-            d={buildPath(l.freq, l.amp, l.off)}
-            fill="none"
-            stroke={l.color}
-            strokeWidth={2}
-            strokeLinecap="round"
-            opacity={0.85}
-          />
-        ))}
-        {ripples.map((r) => {
-          const age = (now - r.born) / 1200
-          const rad = age * 380
-          return (
-            <circle
-              key={r.id}
-              cx={r.x}
-              cy={r.y}
-              r={rad}
+    return (
+      <svg
+        viewBox="0 0 1000 1000"
+        preserveAspectRatio="none"
+        width="100%"
+        height="100%"
+        style={{ display: 'block', background: PALETTE.void }}
+        aria-hidden="true"
+      >
+        <g style={{ mixBlendMode: 'screen' }}>
+          {lines.map((l, i) => (
+            <path
+              key={i}
+              d={buildPath(l.freq, l.amp, l.off)}
               fill="none"
-              stroke={PALETTE.green}
-              strokeWidth={3 * (1 - age)}
-              opacity={1 - age}
+              stroke={l.color}
+              strokeWidth={2}
+              strokeLinecap="round"
+              opacity={0.85}
             />
-          )
-        })}
-      </g>
-    </svg>
-  )
-})
+          ))}
+          {ripples.map((r) => {
+            const age = (now - r.born) / 1200
+            const rad = age * 380
+            // Onde de tap = magenta (la presence, cf. DESIGN/EXPERIENCE Key Flow).
+            return (
+              <circle
+                key={r.id}
+                cx={r.x}
+                cy={r.y}
+                r={rad}
+                fill="none"
+                stroke={PALETTE.magenta}
+                strokeWidth={3 * (1 - age)}
+                opacity={1 - age}
+              />
+            )
+          })}
+        </g>
+      </svg>
+    )
+  }),
+)
 
 /* ==========================================================================
  * STAGE 2 — MANDALA (Canvas 2D)
  * Symetrie en couronnes, composite 'lighter', trainee par fondu.
- * Les taps (pulses) sont pousses dans un ref -> pas de re-render a 60fps.
+ * Glow pre-rendu (sprite offscreen) au lieu de shadowBlur par-op (perf mobile).
  * ========================================================================*/
 interface Pulse {
   x: number
   y: number
   born: number
-  color: [number, number, number]
+  colorIdx: number
 }
 
 const MANDALA_COLORS: [number, number, number][] = [RGB.magenta, RGB.cyan, RGB.green]
 
-const MandalaStage = forwardRef<StageHandle, StageProps>(function MandalaStage(
-  { speed },
-  ref,
-) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const pulsesRef = useRef<Pulse[]>([])
-  const colorIdxRef = useRef(0)
+const MandalaStage = memo(
+  forwardRef<StageHandle, StageProps>(function MandalaStage({ speed }, ref) {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null)
+    const pulsesRef = useRef<Pulse[]>([])
+    const colorIdxRef = useRef(0)
 
-  useImperativeHandle(ref, () => ({
-    tap: (nx, ny) => {
-      pulsesRef.current.push({
-        x: nx,
-        y: ny,
-        born: performance.now(),
-        color: MANDALA_COLORS[colorIdxRef.current++ % MANDALA_COLORS.length],
+    useImperativeHandle(ref, () => ({
+      tap: (nx, ny) => {
+        pulsesRef.current.push({
+          x: nx,
+          y: ny,
+          born: performance.now(),
+          colorIdx: colorIdxRef.current++ % MANDALA_COLORS.length,
+        })
+        if (pulsesRef.current.length > 24) pulsesRef.current.shift()
+      },
+    }))
+
+    useEffect(() => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      const rgba = (c: [number, number, number], a: number) =>
+        `rgba(${(c[0] * 255) | 0},${(c[1] * 255) | 0},${(c[2] * 255) | 0},${a})`
+
+      // Sprites de glow pre-rendus (un par couleur) : evite shadowBlur par-op.
+      const makeGlow = (c: [number, number, number]) => {
+        const s = 64
+        const g = document.createElement('canvas')
+        g.width = s
+        g.height = s
+        const gc = g.getContext('2d')!
+        const grd = gc.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2)
+        grd.addColorStop(0, rgba(c, 1))
+        grd.addColorStop(0.4, rgba(c, 0.5))
+        grd.addColorStop(1, rgba(c, 0))
+        gc.fillStyle = grd
+        gc.fillRect(0, 0, s, s)
+        return g
+      }
+      const glows = MANDALA_COLORS.map(makeGlow)
+
+      let raf = 0
+      let w = 0
+      let h = 0
+
+      const ro = new ResizeObserver(() => {
+        const rect = canvas.getBoundingClientRect()
+        const ratio = dpr()
+        w = Math.max(1, Math.floor(rect.width * ratio))
+        h = Math.max(1, Math.floor(rect.height * ratio))
+        canvas.width = w
+        canvas.height = h
+        ctx.fillStyle = PALETTE.void
+        ctx.fillRect(0, 0, w, h)
       })
-      if (pulsesRef.current.length > 24) pulsesRef.current.shift()
-    },
-  }))
+      ro.observe(canvas)
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    let raf = 0
-    let w = 0
-    let h = 0
-
-    const ro = new ResizeObserver(() => {
-      const rect = canvas.getBoundingClientRect()
-      const ratio = dpr()
-      w = Math.max(1, Math.floor(rect.width * ratio))
-      h = Math.max(1, Math.floor(rect.height * ratio))
-      canvas.width = w
-      canvas.height = h
-      ctx.fillStyle = PALETTE.void
-      ctx.fillRect(0, 0, w, h)
-    })
-    ro.observe(canvas)
-
-    const rgba = (c: [number, number, number], a: number) =>
-      `rgba(${(c[0] * 255) | 0},${(c[1] * 255) | 0},${(c[2] * 255) | 0},${a})`
-
-    const loop = (now: number) => {
-      const t = (now / 1000) * speed
-      // Trainee : voile sombre semi-transparent par-dessus la frame precedente.
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.fillStyle = 'rgba(10,1,24,0.16)'
-      ctx.fillRect(0, 0, w, h)
-
-      ctx.globalCompositeOperation = 'lighter'
-      ctx.save()
-      ctx.translate(w / 2, h / 2)
-      const scale = Math.min(w, h)
-      const arms = 12
-
-      // Couronne ambiante (le mandala respire meme sans tap).
-      const ambR = scale * (0.16 + 0.02 * Math.sin(t * 0.8))
-      for (let i = 0; i < arms; i++) {
-        const a = (i / arms) * Math.PI * 2 + t * 0.25
-        const x = Math.cos(a) * ambR
-        const y = Math.sin(a) * ambR
-        ctx.shadowBlur = 16
-        ctx.shadowColor = PALETTE.cyan
-        ctx.fillStyle = rgba(RGB.cyan, 0.5)
-        ctx.beginPath()
-        ctx.arc(x, y, scale * 0.006, 0, Math.PI * 2)
-        ctx.fill()
+      const dot = (glow: HTMLCanvasElement, x: number, y: number, r: number, alpha: number) => {
+        ctx.globalAlpha = alpha
+        ctx.drawImage(glow, x - r, y - r, r * 2, r * 2)
+        ctx.globalAlpha = 1
       }
 
-      // Pulses de tap : couronnes qui s'ouvrent en symetrie radiale.
-      const pulses = pulsesRef.current
-      for (let k = pulses.length - 1; k >= 0; k--) {
-        const p = pulses[k]
-        const age = (now - p.born) / 1600
-        if (age >= 1) {
-          pulses.splice(k, 1)
-          continue
-        }
-        const rr = age * scale * 0.5
-        const alpha = (1 - age) * 0.9
-        const dot = scale * 0.012 * (1 - age * 0.6)
-        ctx.shadowBlur = 22
-        ctx.shadowColor = rgba(p.color, 1)
-        ctx.fillStyle = rgba(p.color, alpha)
+      const loop = (now: number) => {
+        const t = (now / 1000) * speed
+        // Trainee : voile sombre semi-transparent par-dessus la frame precedente.
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = 'rgba(10,1,24,0.16)'
+        ctx.fillRect(0, 0, w, h)
+
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.save()
+        ctx.translate(w / 2, h / 2)
+        const scale = Math.min(w, h)
+        const arms = 12
+
+        // Couronne ambiante (le mandala respire meme sans tap).
+        const ambR = scale * (0.16 + 0.02 * Math.sin(t * 0.8))
         for (let i = 0; i < arms; i++) {
-          const a = (i / arms) * Math.PI * 2 + t * 0.5 + age * 1.5
-          const x = Math.cos(a) * rr
-          const y = Math.sin(a) * rr
-          ctx.beginPath()
-          ctx.arc(x, y, dot, 0, Math.PI * 2)
-          ctx.fill()
-          // Rayon reliant le centre au point (structure de mandala).
-          ctx.strokeStyle = rgba(p.color, alpha * 0.25)
-          ctx.lineWidth = scale * 0.002
-          ctx.beginPath()
-          ctx.moveTo(0, 0)
-          ctx.lineTo(x, y)
-          ctx.stroke()
+          const a = (i / arms) * Math.PI * 2 + t * 0.25
+          dot(glows[1], Math.cos(a) * ambR, Math.sin(a) * ambR, scale * 0.02, 0.5)
         }
+
+        // Pulses de tap : couronnes qui s'ouvrent en symetrie radiale.
+        const pulses = pulsesRef.current
+        for (let k = pulses.length - 1; k >= 0; k--) {
+          const p = pulses[k]
+          const age = (now - p.born) / 1600
+          if (age >= 1) {
+            pulses.splice(k, 1)
+            continue
+          }
+          const rr = age * scale * 0.5
+          const alpha = (1 - age) * 0.9
+          const size = scale * 0.03 * (1 - age * 0.5)
+          const glow = glows[p.colorIdx]
+          const col = MANDALA_COLORS[p.colorIdx]
+          for (let i = 0; i < arms; i++) {
+            const a = (i / arms) * Math.PI * 2 + t * 0.5 + age * 1.5
+            const x = Math.cos(a) * rr
+            const y = Math.sin(a) * rr
+            dot(glow, x, y, size, alpha)
+            // Rayon reliant le centre au point (structure de mandala).
+            ctx.strokeStyle = rgba(col, alpha * 0.22)
+            ctx.lineWidth = scale * 0.002
+            ctx.beginPath()
+            ctx.moveTo(0, 0)
+            ctx.lineTo(x, y)
+            ctx.stroke()
+          }
+        }
+
+        ctx.restore()
+        raf = requestAnimationFrame(loop)
       }
-
-      ctx.restore()
-      ctx.shadowBlur = 0
       raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
 
-    return () => {
-      cancelAnimationFrame(raf)
-      ro.disconnect()
-    }
-  }, [speed])
+      return () => {
+        cancelAnimationFrame(raf)
+        ro.disconnect()
+      }
+    }, [speed])
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ display: 'block', width: '100%', height: '100%', background: PALETTE.void }}
-      aria-hidden="true"
-    />
-  )
-})
+    return (
+      <canvas
+        ref={canvasRef}
+        style={{ display: 'block', width: '100%', height: '100%', background: PALETTE.void }}
+        aria-hidden="true"
+      />
+    )
+  }),
+)
 
 /* ==========================================================================
  * STAGE 3 — LIQUID (WebGL)
- * Flux marbre : bruit fbm 6 octaves dans un fragment shader. Onde de choc
- * au tap. Uniforms en refs -> le shader ne recompile pas a chaque frame.
+ * Flux marbre : fbm 6 octaves dans un fragment shader. Onde de choc au tap.
+ * Uniforms en refs -> le shader ne recompile pas a chaque frame.
  * ========================================================================*/
 const VERT_SRC = `
 attribute vec2 a_pos;
@@ -397,7 +404,6 @@ void main(){
   vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
   float aspect = u_res.x / u_res.y;
 
-  // Ondes de choc issues des taps.
   float wave = 0.0;
   for (int i = 0; i < 6; i++){
     float age = u_ages[i];
@@ -427,142 +433,146 @@ interface LiquidProps extends StageProps {
   onGlError: () => void
 }
 
-const LiquidStage = forwardRef<StageHandle, LiquidProps>(function LiquidStage(
-  { speed, onGlError },
-  ref,
-) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  // 6 emplacements d'onde de choc (ring buffer). born tres negatif = inactif.
-  const tapsRef = useRef(
-    Array.from({ length: 6 }, () => ({ x: 0, y: 0, born: -1e9 })),
-  )
-  const ringRef = useRef(0)
+const LiquidStage = memo(
+  forwardRef<StageHandle, LiquidProps>(function LiquidStage({ speed, onGlError }, ref) {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null)
+    // 6 emplacements d'onde de choc (ring buffer). born tres negatif = inactif.
+    const tapsRef = useRef(Array.from({ length: 6 }, () => ({ x: 0, y: 0, born: -1e9 })))
+    const ringRef = useRef(0)
 
-  useImperativeHandle(ref, () => ({
-    tap: (nx, ny) => {
-      const slot = tapsRef.current[ringRef.current % 6]
-      slot.x = nx
-      slot.y = 1 - ny // WebGL : origine en bas
-      slot.born = performance.now()
-      ringRef.current++
-    },
-  }))
+    useImperativeHandle(ref, () => ({
+      tap: (nx, ny) => {
+        const slot = tapsRef.current[ringRef.current % 6]
+        slot.x = nx
+        slot.y = 1 - ny // WebGL : origine en bas
+        slot.born = performance.now()
+        ringRef.current++
+      },
+    }))
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    useEffect(() => {
+      const canvas = canvasRef.current
+      if (!canvas) return
 
-    const gl = canvas.getContext('webgl', {
-      antialias: false,
-      premultipliedAlpha: false,
-      powerPreference: 'high-performance',
-    })
-    if (!gl) {
-      onGlError()
-      return
-    }
-
-    const compile = (type: number, src: string): WebGLShader | null => {
-      const sh = gl.createShader(type)
-      if (!sh) return null
-      gl.shaderSource(sh, src)
-      gl.compileShader(sh)
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-        gl.deleteShader(sh)
-        return null
+      const gl = canvas.getContext('webgl', {
+        antialias: false,
+        premultipliedAlpha: false,
+        powerPreference: 'high-performance',
+      })
+      if (!gl) {
+        onGlError()
+        return
       }
-      return sh
-    }
 
-    const vs = compile(gl.VERTEX_SHADER, VERT_SRC)
-    const fs = compile(gl.FRAGMENT_SHADER, FRAG_SRC)
-    const prog = gl.createProgram()
-    if (!vs || !fs || !prog) {
-      onGlError()
-      return
-    }
-    gl.attachShader(prog, vs)
-    gl.attachShader(prog, fs)
-    gl.linkProgram(prog)
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      onGlError()
-      return
-    }
-    gl.useProgram(prog)
-
-    // Triangle plein-ecran.
-    const buf = gl.createBuffer()
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf)
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
-    const aPos = gl.getAttribLocation(prog, 'a_pos')
-    gl.enableVertexAttribArray(aPos)
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0)
-
-    const uRes = gl.getUniformLocation(prog, 'u_res')
-    const uTime = gl.getUniformLocation(prog, 'u_time')
-    const uTaps = gl.getUniformLocation(prog, 'u_taps')
-    const uAges = gl.getUniformLocation(prog, 'u_ages')
-    gl.uniform3fv(gl.getUniformLocation(prog, 'u_colA'), RGB.magenta)
-    gl.uniform3fv(gl.getUniformLocation(prog, 'u_colB'), RGB.cyan)
-    gl.uniform3fv(gl.getUniformLocation(prog, 'u_colC'), RGB.green)
-
-    let w = 0
-    let h = 0
-    const ro = new ResizeObserver(() => {
-      const rect = canvas.getBoundingClientRect()
-      const ratio = dpr()
-      w = Math.max(1, Math.floor(rect.width * ratio))
-      h = Math.max(1, Math.floor(rect.height * ratio))
-      canvas.width = w
-      canvas.height = h
-      gl.viewport(0, 0, w, h)
-    })
-    ro.observe(canvas)
-
-    const start = performance.now()
-    const tapsFlat = new Float32Array(12)
-    const agesFlat = new Float32Array(6)
-    let raf = 0
-
-    const loop = (now: number) => {
-      gl.uniform2f(uRes, w, h)
-      gl.uniform1f(uTime, ((now - start) / 1000) * speed)
-      for (let i = 0; i < 6; i++) {
-        const s = tapsRef.current[i]
-        tapsFlat[i * 2] = s.x
-        tapsFlat[i * 2 + 1] = s.y
-        agesFlat[i] = (now - s.born) / 1000
+      const compile = (type: number, src: string): WebGLShader | null => {
+        const sh = gl.createShader(type)
+        if (!sh) return null
+        gl.shaderSource(sh, src)
+        gl.compileShader(sh)
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+          gl.deleteShader(sh)
+          return null
+        }
+        return sh
       }
-      gl.uniform2fv(uTaps, tapsFlat)
-      gl.uniform1fv(uAges, agesFlat)
-      gl.drawArrays(gl.TRIANGLES, 0, 3)
+
+      const vs = compile(gl.VERTEX_SHADER, VERT_SRC)
+      const fs = compile(gl.FRAGMENT_SHADER, FRAG_SRC)
+      const prog = gl.createProgram()
+      if (!vs || !fs || !prog) {
+        if (vs) gl.deleteShader(vs)
+        if (fs) gl.deleteShader(fs)
+        if (prog) gl.deleteProgram(prog)
+        onGlError()
+        return
+      }
+      gl.attachShader(prog, vs)
+      gl.attachShader(prog, fs)
+      gl.linkProgram(prog)
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        gl.deleteShader(vs)
+        gl.deleteShader(fs)
+        gl.deleteProgram(prog)
+        onGlError()
+        return
+      }
+      gl.useProgram(prog)
+
+      const buf = gl.createBuffer()
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
+      const aPos = gl.getAttribLocation(prog, 'a_pos')
+      gl.enableVertexAttribArray(aPos)
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0)
+
+      const uRes = gl.getUniformLocation(prog, 'u_res')
+      const uTime = gl.getUniformLocation(prog, 'u_time')
+      const uTaps = gl.getUniformLocation(prog, 'u_taps')
+      const uAges = gl.getUniformLocation(prog, 'u_ages')
+      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colA'), RGB.magenta)
+      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colB'), RGB.cyan)
+      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colC'), RGB.green)
+
+      let w = 0
+      let h = 0
+      const ro = new ResizeObserver(() => {
+        const rect = canvas.getBoundingClientRect()
+        const ratio = dpr()
+        w = Math.max(1, Math.floor(rect.width * ratio))
+        h = Math.max(1, Math.floor(rect.height * ratio))
+        canvas.width = w
+        canvas.height = h
+        gl.viewport(0, 0, w, h)
+      })
+      ro.observe(canvas)
+
+      const start = performance.now()
+      const tapsFlat = new Float32Array(12)
+      const agesFlat = new Float32Array(6)
+      let raf = 0
+
+      const loop = (now: number) => {
+        gl.uniform2f(uRes, w, h)
+        gl.uniform1f(uTime, ((now - start) / 1000) * speed)
+        for (let i = 0; i < 6; i++) {
+          const s = tapsRef.current[i]
+          tapsFlat[i * 2] = s.x
+          tapsFlat[i * 2 + 1] = s.y
+          agesFlat[i] = (now - s.born) / 1000
+        }
+        gl.uniform2fv(uTaps, tapsFlat)
+        gl.uniform1fv(uAges, agesFlat)
+        gl.drawArrays(gl.TRIANGLES, 0, 3)
+        raf = requestAnimationFrame(loop)
+      }
       raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
 
-    return () => {
-      cancelAnimationFrame(raf)
-      ro.disconnect()
-      gl.deleteProgram(prog)
-      gl.deleteShader(vs)
-      gl.deleteShader(fs)
-      gl.deleteBuffer(buf)
-    }
-  }, [speed, onGlError])
+      return () => {
+        cancelAnimationFrame(raf)
+        ro.disconnect()
+        gl.deleteProgram(prog)
+        gl.deleteShader(vs)
+        gl.deleteShader(fs)
+        gl.deleteBuffer(buf)
+        // Libere le contexte : evite l'epuisement apres de nombreux aller-retours.
+        gl.getExtension('WEBGL_lose_context')?.loseContext()
+      }
+    }, [speed, onGlError])
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ display: 'block', width: '100%', height: '100%', background: PALETTE.void }}
-      aria-hidden="true"
-    />
-  )
-})
+    return (
+      <canvas
+        ref={canvasRef}
+        style={{ display: 'block', width: '100%', height: '100%', background: PALETTE.void }}
+        aria-hidden="true"
+      />
+    )
+  }),
+)
 
 /* ==========================================================================
- * HUD, jauge, selecteur, boot BIOS, flash STAGE UP
+ * HUD, jauge, selecteur, eveil, flash
  * ========================================================================*/
-function Hud({
+const Hud = memo(function Hud({
   stageName,
   score,
   highScore,
@@ -573,15 +583,11 @@ function Hud({
   highScore: number
   combo: number
 }) {
-  const cell: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    lineHeight: 1.1,
-  }
+  const cell: React.CSSProperties = { display: 'flex', flexDirection: 'column', lineHeight: 1.1 }
   const label: React.CSSProperties = {
     fontSize: 10,
     letterSpacing: '0.18em',
-    color: 'rgba(255,255,255,0.45)',
+    color: 'rgba(255,255,255,0.55)', // >= AA sur le fond (labels 10px)
   }
   return (
     <div
@@ -600,26 +606,27 @@ function Hud({
       <div style={{ ...cell, alignItems: 'center' }}>
         <span style={label}>SCORE</span>
         <span style={{ color: PALETTE.amber, fontSize: 18, fontWeight: 700 }}>
-          {score.toString().padStart(6, '0')}
+          {Math.min(score, 999999).toString().padStart(6, '0')}
         </span>
       </div>
       <div style={{ ...cell, alignItems: 'flex-end' }}>
         <span style={label}>HIGH</span>
-        <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 15 }}>
-          {highScore.toString().padStart(6, '0')}
+        <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15, fontWeight: 700 }}>
+          {Math.min(highScore, 999999).toString().padStart(6, '0')}
         </span>
         {combo > 1 && (
           <span style={{ color: PALETTE.green, fontSize: 12, fontWeight: 700, marginTop: 2 }}>
-            x{combo} COMBO
+            x{Math.min(combo, 99)} COMBO
           </span>
         )}
       </div>
     </div>
   )
-}
+})
 
 function FlowGauge({ flow }: { flow: number }) {
-  const pct = Math.min(100, (flow / FLOW_MAX) * 100)
+  const pct = Math.min(100, (flow / FLUX_MAX) * 100)
+  const rounded = Math.round(pct)
   const hot = pct > 80
   return (
     <div style={{ padding: '0 14px 12px' }}>
@@ -629,16 +636,21 @@ function FlowGauge({ flow }: { flow: number }) {
           justifyContent: 'space-between',
           fontSize: 10,
           letterSpacing: '0.18em',
-          color: 'rgba(255,255,255,0.45)',
+          color: 'rgba(255,255,255,0.55)',
           marginBottom: 4,
         }}
       >
         <span>FLUX</span>
-        <span style={{ color: hot ? PALETTE.green : 'rgba(255,255,255,0.45)' }}>
-          {Math.round(pct)}%
+        <span style={{ color: hot ? PALETTE.green : 'rgba(255,255,255,0.55)', fontWeight: hot ? 700 : 400 }}>
+          {rounded}%{hot ? ' ▲' : ''}
         </span>
       </div>
       <div
+        role="progressbar"
+        aria-label="FLUX"
+        aria-valuenow={rounded}
+        aria-valuemin={0}
+        aria-valuemax={100}
         style={{
           height: 12,
           borderRadius: 6,
@@ -661,7 +673,7 @@ function FlowGauge({ flow }: { flow: number }) {
   )
 }
 
-function StageSelector({
+const StageSelector = memo(function StageSelector({
   current,
   maxUnlocked,
   glFailed,
@@ -679,13 +691,16 @@ function StageSelector({
         const glDown = s.engine === 'webgl' && glFailed
         const disabled = locked || glDown
         const active = s.id === current
+        const suffix = locked ? ' verrouillé' : glDown ? ' indisponible' : ''
         return (
           <button
             key={s.id}
             type="button"
             disabled={disabled}
             onClick={() => onSelect(s.id)}
-            aria-label={`Stage ${s.id} ${s.name}${locked ? ' verrouille' : ''}`}
+            aria-current={active ? 'true' : undefined}
+            aria-label={`Stage ${s.id} ${s.name}${suffix}`}
+            className="tt-btn"
             style={{
               flex: 1,
               maxWidth: 120,
@@ -702,7 +717,7 @@ function StageSelector({
               opacity: disabled ? 0.6 : 1,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 13 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }} aria-hidden="true">
               {glDown ? '⚠' : locked ? '🔒' : s.id}
             </div>
             <div>{s.name}</div>
@@ -711,7 +726,7 @@ function StageSelector({
       })}
     </div>
   )
-}
+})
 
 // Murmure de l'oracle au franchissement de chaque seuil (cf. EXPERIENCE.md).
 const STAGE_CRYPTIC: Record<number, string> = {
@@ -719,7 +734,7 @@ const STAGE_CRYPTIC: Record<number, string> = {
   3: "le flux profond s'ouvre",
 }
 
-function StageUpFlash({ sub }: { sub: string }) {
+function StageUpFlash({ sub, reduced }: { sub: string; reduced: boolean }) {
   return (
     <div
       style={{
@@ -729,8 +744,9 @@ function StageUpFlash({ sub }: { sub: string }) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'rgba(57,255,20,0.14)',
-        animation: 'tt-flash 0.95s ease-out forwards',
+        // reduced-motion : voile fixe discret, aucune pulsation.
+        background: reduced ? 'rgba(57,255,20,0.10)' : 'rgba(57,255,20,0.14)',
+        animation: reduced ? 'none' : 'tt-flash 0.95s ease-out forwards',
         pointerEvents: 'none',
         zIndex: 20,
       }}
@@ -751,8 +767,8 @@ function StageUpFlash({ sub }: { sub: string }) {
         style={{
           marginTop: 10,
           fontFamily: 'ui-monospace, monospace',
-          fontSize: 'clamp(11px, 3.4vw, 18px)',
-          letterSpacing: '0.06em',
+          fontSize: 'clamp(11px, 3.4vw, 15px)',
+          letterSpacing: '0.02em',
           color: 'rgba(255,255,255,0.85)',
         }}
       >
@@ -772,7 +788,8 @@ const ORACLE_BOOT = [
   "POSE UN DOIGT POUR L'ÉVEILLER",
 ]
 
-function BiosBoot({ onStart }: { onStart: () => void }) {
+// Ecran d'eveil : purement visuel (l'ecran lui-meme capte le premier tap).
+function BootOverlay({ reduced }: { reduced: boolean }) {
   const [shown, setShown] = useState(1)
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -781,9 +798,8 @@ function BiosBoot({ onStart }: { onStart: () => void }) {
     return () => window.clearInterval(id)
   }, [])
   return (
-    <button
-      type="button"
-      onClick={onStart}
+    <div
+      aria-hidden="true"
       style={{
         position: 'absolute',
         inset: 0,
@@ -793,13 +809,10 @@ function BiosBoot({ onStart }: { onStart: () => void }) {
         padding: '0 9vw',
         gap: 10,
         background: PALETTE.void,
-        border: 'none',
-        textAlign: 'left',
-        cursor: 'pointer',
+        pointerEvents: 'none',
         zIndex: 30,
         fontFamily: 'ui-monospace, monospace',
       }}
-      aria-label="Poser un doigt pour eveiller la borne"
     >
       {ORACLE_BOOT.slice(0, shown).map((line, i) => {
         const isCta = i === ORACLE_BOOT.length - 1
@@ -812,15 +825,15 @@ function BiosBoot({ onStart }: { onStart: () => void }) {
               color: isCta ? PALETTE.green : PALETTE.cyan,
               opacity: isCta ? 1 : 0.72,
               textShadow: isCta ? `0 0 12px ${PALETTE.green}` : 'none',
-              animation: isCta ? 'tt-blink 1.1s steps(2) infinite' : 'tt-rise 0.5s ease-out',
+              animation: reduced ? 'none' : isCta ? 'tt-blink 1.1s steps(2) infinite' : 'tt-rise 0.5s ease-out',
               marginTop: isCta ? 12 : 0,
             }}
           >
-            {line || ' '}
+            {line}
           </div>
         )
       })}
-    </button>
+    </div>
   )
 }
 
@@ -831,9 +844,10 @@ export default function TapTap() {
   const reduced = useReducedMotion()
   const speed = reduced ? 0.3 : 1
 
-  const saved = useRef<SaveData>(loadSave()).current
+  const [saved] = useState(loadSave) // lazy-init : lu une seule fois
   const [booted, setBooted] = useState(false)
-  const [stageIndex, setStageIndex] = useState(0)
+  // Le joueur qui revient atterrit sur son stage le plus haut (evite de re-franchir).
+  const [stageIndex, setStageIndex] = useState(saved.maxUnlocked - 1)
   const [maxUnlocked, setMaxUnlocked] = useState(saved.maxUnlocked)
   const [flow, setFlow] = useState(0)
   const [combo, setCombo] = useState(0)
@@ -841,26 +855,39 @@ export default function TapTap() {
   const [highScore, setHighScore] = useState(saved.highScore)
   const [flashSub, setFlashSub] = useState<string | null>(null)
   const [glFailed, setGlFailed] = useState(false)
+  const [whispered, setWhispered] = useState(false)
+  const [srMsg, setSrMsg] = useState('')
 
   const engineRef = useRef<StageHandle>(null)
+  const screenRef = useRef<HTMLDivElement>(null)
   const lastTapRef = useRef(0)
   const comboRef = useRef(0)
   const flashingRef = useRef(false)
+  const flowRef = useRef(0) // miroir synchrone du FLUX (detection de seuil pure)
 
   const stage = STAGES[stageIndex]
   const topStageId = glFailed ? 2 : 3
-  // Contemplation : les trois couches ouvertes ET on est au sommet accessible.
-  // La tension se relache (cf. EXPERIENCE.md > State Patterns 4).
-  const contemplation = maxUnlocked >= topStageId && stage.id === topStageId
+  // Contemplation : les trois couches ouvertes, au sommet accessible, hors panne.
+  const contemplation = maxUnlocked >= topStageId && stage.id === topStageId && !glFailed
   const contemplationRef = useRef(contemplation)
   contemplationRef.current = contemplation
 
-  // --- Persistance high-score + progression ---
+  // Murmure de contemplation : une fois par entree (ne clignote pas au fil des taps).
+  useEffect(() => {
+    setWhispered(contemplation)
+  }, [contemplation])
+
+  // Persistance : maxUnlocked (rare) immediat ; highScore (chaud) debounce.
   useEffect(() => {
     persistSave({ highScore, maxUnlocked })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maxUnlocked])
+  useEffect(() => {
+    const id = window.setTimeout(() => persistSave({ highScore, maxUnlocked }), 1000)
+    return () => window.clearTimeout(id)
   }, [highScore, maxUnlocked])
 
-  // --- Boucle de jeu : descente de la jauge + expiration du combo ---
+  // Boucle de jeu : descente de la jauge + expiration du combo.
   useEffect(() => {
     if (!booted) return
     let raf = 0
@@ -868,9 +895,12 @@ export default function TapTap() {
     const loop = (now: number) => {
       const dt = (now - last) / 1000
       last = now
-      // Decroissance adoucie en contemplation : on peut s'arreter et regarder.
       const decay = contemplationRef.current ? DECAY_PER_SEC * 0.4 : DECAY_PER_SEC
-      setFlow((f) => Math.max(0, f - decay * dt))
+      setFlow((f) => {
+        const v = Math.max(0, f - decay * dt)
+        flowRef.current = v
+        return v
+      })
       if (comboRef.current > 0 && now - lastTapRef.current > COMBO_WINDOW) {
         comboRef.current = 0
         setCombo(0)
@@ -884,26 +914,31 @@ export default function TapTap() {
   const triggerStageUp = useCallback(() => {
     if (flashingRef.current) return
     const nextId = Math.min(stage.id + 1, topStageId)
-    if (nextId <= stage.id) {
-      // Deja au sommet accessible : on plafonne le FLUX, pas de bascule.
-      setFlow(FLOW_MAX)
+    // Ceremonie SEULEMENT pour un deblocage reellement nouveau. Re-remplir un
+    // stage deja ouvert plafonne le FLUX, sans flash / +500 / bascule (anti-farm).
+    if (nextId <= stage.id || nextId <= maxUnlocked) {
+      flowRef.current = FLUX_MAX
+      setFlow(FLUX_MAX)
       return
     }
     flashingRef.current = true
-    setMaxUnlocked((m) => Math.max(m, nextId))
+    setMaxUnlocked(nextId)
     setStageIndex(nextId - 1)
-    setFlashSub(STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name)
+    const sub = STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name
+    setFlashSub(sub)
+    setSrMsg(`Seuil franchi. Stage ${STAGES[nextId - 1].name}. ${sub}.`)
     setScore((s) => s + 500) // bonus de passage
     window.setTimeout(() => {
       flashingRef.current = false
       setFlashSub(null)
+      flowRef.current = 14
       setFlow(14) // residu de FLUX sur la nouvelle couche
     }, FLASH_MS)
-  }, [stage.id, topStageId])
+  }, [stage.id, topStageId, maxUnlocked])
 
   const registerTap = useCallback(
     (nx: number, ny: number) => {
-      if (!booted || flashingRef.current) return
+      if (flashingRef.current) return
       engineRef.current?.tap(nx, ny)
 
       const now = performance.now()
@@ -914,11 +949,11 @@ export default function TapTap() {
       setCombo(c)
 
       const gain = TAP_GAIN_BASE * (1 + Math.min(c, 20) * 0.12)
-      setFlow((f) => {
-        const nf = f + gain
-        if (nf >= FLOW_MAX) triggerStageUp()
-        return Math.min(FLOW_MAX, nf)
-      })
+      const raw = flowRef.current + gain
+      const nf = Math.min(FLUX_MAX, raw)
+      flowRef.current = nf
+      setFlow(nf)
+      if (raw >= FLUX_MAX) triggerStageUp() // detection synchrone via flowRef (pur)
 
       const pts = Math.round(10 * (1 + Math.min(c, 30) * 0.1))
       setScore((s) => {
@@ -927,35 +962,41 @@ export default function TapTap() {
         return ns
       })
     },
-    [booted, triggerStageUp],
+    [triggerStageUp],
   )
 
-  // Coordonnees normalisees [0,1] a partir d'un evenement pointeur.
+  // Le premier contact reveille la borne ET pulse au point touche.
+  const tapAt = useCallback(
+    (nx: number, ny: number) => {
+      if (!booted) setBooted(true)
+      registerTap(Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny)))
+    },
+    [booted, registerTap],
+  )
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault()
       const rect = e.currentTarget.getBoundingClientRect()
-      const nx = (e.clientX - rect.left) / rect.width
-      const ny = (e.clientY - rect.top) / rect.height
-      registerTap(Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny)))
+      tapAt((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height)
     },
-    [registerTap],
+    [tapAt],
   )
 
-  // Accessibilite clavier : Espace / Entree = tap au centre (leger jitter).
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault()
-        registerTap(0.5 + (Math.random() - 0.5) * 0.3, 0.5 + (Math.random() - 0.5) * 0.3)
+        tapAt(0.5 + (Math.random() - 0.5) * 0.3, 0.5 + (Math.random() - 0.5) * 0.3)
       }
     },
-    [registerTap],
+    [tapAt],
   )
 
   const handleGlError = useCallback(() => {
     setGlFailed(true)
-    setStageIndex((idx) => (STAGES[idx].engine === 'webgl' ? 1 : idx))
+    setStageIndex((idx) => (STAGES[idx].engine === 'webgl' ? 1 : idx)) // repli sur MANDALA
+    setSrMsg('Le flux profond ne répond pas. Retour aux couronnes.')
   }, [])
 
   const selectStage = useCallback(
@@ -967,6 +1008,11 @@ export default function TapTap() {
     [maxUnlocked, glFailed],
   )
 
+  // Focus initial sur la surface de jeu (clavier immediat, sans piege).
+  useEffect(() => {
+    screenRef.current?.focus()
+  }, [])
+
   return (
     <div
       style={{
@@ -976,11 +1022,20 @@ export default function TapTap() {
         alignItems: 'center',
         justifyContent: 'center',
         background: '#05010d',
-        padding: 'max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom))',
+        padding:
+          'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
         boxSizing: 'border-box',
       }}
     >
       <style>{KEYFRAMES}</style>
+
+      {/* Region live (visuellement masquee) pour lecteur d'ecran */}
+      <div
+        aria-live="assertive"
+        style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}
+      >
+        {srMsg}
+      </div>
 
       {/* Coque de la borne */}
       <div
@@ -1001,14 +1056,19 @@ export default function TapTap() {
         <Hud stageName={stage.name} score={score} highScore={highScore} combo={combo} />
         <FlowGauge flow={flow} />
 
-        {/* Ecran CRT bombe */}
+        {/* Ecran CRT bombe — surface de jeu unique (eveil + jeu) */}
         <div style={{ position: 'relative', flex: 1, margin: '0 14px', minHeight: 0 }}>
           <div
+            ref={screenRef}
             role="button"
             tabIndex={0}
-            aria-label="Ecran de jeu — tape pour pulser et remplir le FLUX"
-            onPointerDown={booted ? handlePointerDown : undefined}
-            onKeyDown={booted ? handleKeyDown : undefined}
+            aria-label={
+              booted
+                ? 'Ecran de jeu — tape pour pulser et remplir le FLUX'
+                : "Ecran — touche pour eveiller la borne"
+            }
+            onPointerDown={handlePointerDown}
+            onKeyDown={handleKeyDown}
             className="tt-screen"
             style={{
               position: 'absolute',
@@ -1017,12 +1077,10 @@ export default function TapTap() {
               overflow: 'hidden',
               background: PALETTE.void,
               touchAction: 'manipulation',
-              cursor: booted ? 'pointer' : 'default',
-              // Bombe CRT.
+              cursor: 'pointer',
               boxShadow: 'inset 0 0 80px rgba(0,0,0,0.9)',
             }}
           >
-            {/* Moteur du stage courant */}
             {stage.engine === 'svg' && <WaveformStage ref={engineRef} speed={speed} />}
             {stage.engine === 'canvas' && <MandalaStage ref={engineRef} speed={speed} />}
             {stage.engine === 'webgl' && (
@@ -1033,10 +1091,10 @@ export default function TapTap() {
             <div className="tt-scanlines" aria-hidden="true" />
             <div className="tt-vignette" aria-hidden="true" />
 
-            {flashSub && <StageUpFlash sub={flashSub} />}
+            {flashSub && <StageUpFlash sub={flashSub} reduced={reduced} />}
 
-            {/* Contemplation : la borne murmure quand la main se pose. */}
-            {booted && contemplation && !flashSub && combo === 0 && (
+            {/* Contemplation : murmure une fois, stable (ne clignote pas). */}
+            {booted && whispered && !flashSub && (
               <div
                 aria-hidden="true"
                 style={{
@@ -1045,12 +1103,13 @@ export default function TapTap() {
                   right: 0,
                   bottom: 16,
                   textAlign: 'center',
-                  padding: '0 8vw',
+                  padding: '6px 8vw',
                   fontFamily: 'ui-monospace, monospace',
                   fontSize: 'clamp(11px, 3vw, 14px)',
                   letterSpacing: '0.02em',
-                  color: 'rgba(255,255,255,0.45)',
-                  animation: 'tt-rise 1.2s ease-out',
+                  color: 'rgba(255,255,255,0.6)',
+                  textShadow: '0 1px 8px rgba(5,1,13,0.9)',
+                  animation: reduced ? 'none' : 'tt-rise 1.2s ease-out',
                   zIndex: 12,
                   pointerEvents: 'none',
                 }}
@@ -1059,22 +1118,23 @@ export default function TapTap() {
               </div>
             )}
 
-            {!booted && <BiosBoot onStart={() => setBooted(true)} />}
+            {!booted && <BootOverlay reduced={reduced} />}
           </div>
         </div>
 
         {glFailed && (
           <div
+            role="status"
             style={{
               padding: '8px 14px 0',
-              color: PALETTE.amber,
+              color: 'rgba(255,255,255,0.6)', // voix oracle (ambre reserve au score)
               fontSize: 11,
               fontFamily: 'ui-monospace, monospace',
-              letterSpacing: '0.06em',
+              letterSpacing: '0.02em',
               textAlign: 'center',
             }}
           >
-le flux profond ne répond pas — retour aux couronnes
+            le flux profond ne répond pas — retour aux couronnes
           </div>
         )}
 
@@ -1091,7 +1151,8 @@ le flux profond ne répond pas — retour aux couronnes
   )
 }
 
-// Keyframes + effets CRT injectes une fois.
+// Keyframes + effets CRT injectes une fois. Les animations non essentielles
+// sont coupees sous prefers-reduced-motion (au cas ou, en plus des gardes JS).
 const KEYFRAMES = `
 @keyframes tt-flash {
   0% { opacity: 0; }
@@ -1107,6 +1168,10 @@ const KEYFRAMES = `
   100% { opacity: 1; transform: translateY(0); }
 }
 .tt-screen:focus-visible {
+  outline: 2px solid ${PALETTE.green};
+  outline-offset: 2px;
+}
+.tt-btn:focus-visible {
   outline: 2px solid ${PALETTE.green};
   outline-offset: 2px;
 }
