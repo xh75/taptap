@@ -633,7 +633,7 @@ function FlowGauge({ flow }: { flow: number }) {
           marginBottom: 4,
         }}
       >
-        <span>FLOW</span>
+        <span>FLUX</span>
         <span style={{ color: hot ? PALETTE.green : 'rgba(255,255,255,0.45)' }}>
           {Math.round(pct)}%
         </span>
@@ -713,7 +713,13 @@ function StageSelector({
   )
 }
 
-function StageUpFlash({ name }: { name: string }) {
+// Murmure de l'oracle au franchissement de chaque seuil (cf. EXPERIENCE.md).
+const STAGE_CRYPTIC: Record<number, string> = {
+  2: 'les couronnes répondent',
+  3: "le flux profond s'ouvre",
+}
+
+function StageUpFlash({ sub }: { sub: string }) {
   return (
     <div
       style={{
@@ -739,40 +745,39 @@ function StageUpFlash({ name }: { name: string }) {
           textShadow: `0 0 24px ${PALETTE.green}`,
         }}
       >
-        STAGE UP!
+        SEUIL
       </div>
       <div
         style={{
-          marginTop: 8,
+          marginTop: 10,
           fontFamily: 'ui-monospace, monospace',
-          fontSize: 'clamp(12px, 3.5vw, 20px)',
-          letterSpacing: '0.3em',
-          color: '#fff',
+          fontSize: 'clamp(11px, 3.4vw, 18px)',
+          letterSpacing: '0.06em',
+          color: 'rgba(255,255,255,0.85)',
         }}
       >
-        {name}
+        {sub}
       </div>
     </div>
   )
 }
 
-const BIOS_LINES = [
-  'TAP·TAP ARCADE SYSTEM',
-  'BIOS v0.1 ...... OK',
-  'PSYCHE-GEN CORE ...... OK',
-  'ENGINE/SVG ...... READY',
-  'ENGINE/CANVAS2D ...... LOCKED',
-  'ENGINE/WEBGL ...... LOCKED',
-  '',
-  'INSERT COIN — TAP TO START',
+// Voix cryptique de l'oracle (cf. EXPERIENCE.md > Voice and Tone). La derniere
+// ligne est la CTA de depart : poetique mais explicite dans sa forme.
+const ORACLE_BOOT = [
+  'tap·tap',
+  'quelque chose dort sous le verre.',
+  'chaque pression est une onde.',
+  "l'onde en appelle d'autres.",
+  "POSE UN DOIGT POUR L'ÉVEILLER",
 ]
 
 function BiosBoot({ onStart }: { onStart: () => void }) {
   const [shown, setShown] = useState(1)
   useEffect(() => {
     const id = window.setInterval(() => {
-      setShown((n) => (n < BIOS_LINES.length ? n + 1 : n))
-    }, 220)
+      setShown((n) => (n < ORACLE_BOOT.length ? n + 1 : n))
+    }, 260)
     return () => window.clearInterval(id)
   }, [])
   return (
@@ -785,8 +790,8 @@ function BiosBoot({ onStart }: { onStart: () => void }) {
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
-        padding: '0 8vw',
-        gap: 6,
+        padding: '0 9vw',
+        gap: 10,
         background: PALETTE.void,
         border: 'none',
         textAlign: 'left',
@@ -794,18 +799,21 @@ function BiosBoot({ onStart }: { onStart: () => void }) {
         zIndex: 30,
         fontFamily: 'ui-monospace, monospace',
       }}
-      aria-label="Demarrer TAP-TAP"
+      aria-label="Poser un doigt pour eveiller la borne"
     >
-      {BIOS_LINES.slice(0, shown).map((line, i) => {
-        const isCta = line.startsWith('INSERT COIN')
+      {ORACLE_BOOT.slice(0, shown).map((line, i) => {
+        const isCta = i === ORACLE_BOOT.length - 1
         return (
           <div
             key={i}
             style={{
-              fontSize: isCta ? 'clamp(13px, 3.6vw, 18px)' : 'clamp(11px, 3vw, 15px)',
+              fontSize: isCta ? 'clamp(12px, 3.4vw, 17px)' : 'clamp(11px, 3vw, 15px)',
+              letterSpacing: isCta ? '0.12em' : '0.02em',
               color: isCta ? PALETTE.green : PALETTE.cyan,
+              opacity: isCta ? 1 : 0.72,
               textShadow: isCta ? `0 0 12px ${PALETTE.green}` : 'none',
-              animation: isCta ? 'tt-blink 1s steps(2) infinite' : 'none',
+              animation: isCta ? 'tt-blink 1.1s steps(2) infinite' : 'tt-rise 0.5s ease-out',
+              marginTop: isCta ? 12 : 0,
             }}
           >
             {line || ' '}
@@ -831,7 +839,7 @@ export default function TapTap() {
   const [combo, setCombo] = useState(0)
   const [score, setScore] = useState(0)
   const [highScore, setHighScore] = useState(saved.highScore)
-  const [flashName, setFlashName] = useState<string | null>(null)
+  const [flashSub, setFlashSub] = useState<string | null>(null)
   const [glFailed, setGlFailed] = useState(false)
 
   const engineRef = useRef<StageHandle>(null)
@@ -840,6 +848,12 @@ export default function TapTap() {
   const flashingRef = useRef(false)
 
   const stage = STAGES[stageIndex]
+  const topStageId = glFailed ? 2 : 3
+  // Contemplation : les trois couches ouvertes ET on est au sommet accessible.
+  // La tension se relache (cf. EXPERIENCE.md > State Patterns 4).
+  const contemplation = maxUnlocked >= topStageId && stage.id === topStageId
+  const contemplationRef = useRef(contemplation)
+  contemplationRef.current = contemplation
 
   // --- Persistance high-score + progression ---
   useEffect(() => {
@@ -854,7 +868,9 @@ export default function TapTap() {
     const loop = (now: number) => {
       const dt = (now - last) / 1000
       last = now
-      setFlow((f) => Math.max(0, f - DECAY_PER_SEC * dt))
+      // Decroissance adoucie en contemplation : on peut s'arreter et regarder.
+      const decay = contemplationRef.current ? DECAY_PER_SEC * 0.4 : DECAY_PER_SEC
+      setFlow((f) => Math.max(0, f - decay * dt))
       if (comboRef.current > 0 && now - lastTapRef.current > COMBO_WINDOW) {
         comboRef.current = 0
         setCombo(0)
@@ -865,25 +881,23 @@ export default function TapTap() {
     return () => cancelAnimationFrame(raf)
   }, [booted])
 
-  const topStageId = glFailed ? 2 : 3
-
   const triggerStageUp = useCallback(() => {
     if (flashingRef.current) return
     const nextId = Math.min(stage.id + 1, topStageId)
     if (nextId <= stage.id) {
-      // Deja au dernier moteur : on plafonne le FLOW, pas de bascule.
+      // Deja au sommet accessible : on plafonne le FLUX, pas de bascule.
       setFlow(FLOW_MAX)
       return
     }
     flashingRef.current = true
     setMaxUnlocked((m) => Math.max(m, nextId))
     setStageIndex(nextId - 1)
-    setFlashName(STAGES[nextId - 1].name)
+    setFlashSub(STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name)
     setScore((s) => s + 500) // bonus de passage
     window.setTimeout(() => {
       flashingRef.current = false
-      setFlashName(null)
-      setFlow(14) // residu de FLOW sur le nouveau stage
+      setFlashSub(null)
+      setFlow(14) // residu de FLUX sur la nouvelle couche
     }, FLASH_MS)
   }, [stage.id, topStageId])
 
@@ -992,7 +1006,7 @@ export default function TapTap() {
           <div
             role="button"
             tabIndex={0}
-            aria-label="Ecran de jeu — tape pour pulser et remplir le FLOW"
+            aria-label="Ecran de jeu — tape pour pulser et remplir le FLUX"
             onPointerDown={booted ? handlePointerDown : undefined}
             onKeyDown={booted ? handleKeyDown : undefined}
             className="tt-screen"
@@ -1019,7 +1033,32 @@ export default function TapTap() {
             <div className="tt-scanlines" aria-hidden="true" />
             <div className="tt-vignette" aria-hidden="true" />
 
-            {flashName && <StageUpFlash name={flashName} />}
+            {flashSub && <StageUpFlash sub={flashSub} />}
+
+            {/* Contemplation : la borne murmure quand la main se pose. */}
+            {booted && contemplation && !flashSub && combo === 0 && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  bottom: 16,
+                  textAlign: 'center',
+                  padding: '0 8vw',
+                  fontFamily: 'ui-monospace, monospace',
+                  fontSize: 'clamp(11px, 3vw, 14px)',
+                  letterSpacing: '0.02em',
+                  color: 'rgba(255,255,255,0.45)',
+                  animation: 'tt-rise 1.2s ease-out',
+                  zIndex: 12,
+                  pointerEvents: 'none',
+                }}
+              >
+                plus rien à franchir. reste, ou recommence.
+              </div>
+            )}
+
             {!booted && <BiosBoot onStart={() => setBooted(true)} />}
           </div>
         </div>
@@ -1035,7 +1074,7 @@ export default function TapTap() {
               textAlign: 'center',
             }}
           >
-            ⚠ SIGNAL WEBGL ABSENT — REPLI SUR LE STAGE MANDALA
+le flux profond ne répond pas — retour aux couronnes
           </div>
         )}
 
@@ -1062,6 +1101,10 @@ const KEYFRAMES = `
 @keyframes tt-blink {
   0%, 50% { opacity: 1; }
   50.01%, 100% { opacity: 0.25; }
+}
+@keyframes tt-rise {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 .tt-screen:focus-visible {
   outline: 2px solid ${PALETTE.green};
