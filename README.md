@@ -36,6 +36,8 @@ Palette fixe, esthétique CRT/néon : fond `#0a0118`, magenta `#ff2e97`, cyan `#
 ## Installation
 
 ```bash
+git clone https://github.com/xh75/taptap
+cd taptap
 npm install
 npm run dev        # http://localhost:5173
 ```
