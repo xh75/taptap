@@ -68,6 +68,15 @@ const PTS_BASE = 10
 const PTS_RESONANCE = 150
 const PTS_INTERFERENCE = 500
 
+// Boss de fin de palier (cf. docs/design/matrice-boss.md, cadre « L'Intrus »).
+// Seuls les stages listes ont un boss auteur ; les autres gardent le SEUIL direct.
+const BOSS_STAGES: Record<number, string> = { 1: 'LA PORTEUSE' }
+const BOSS_TELL_EVERY = 3500 // ms entre deux charges (le « tell »)
+const BOSS_TELL_DUR = 1150 // ms de charge — fenetre de danger (rouge) : NE PAS taper
+const BOSS_TELL_DMG = 24 // SIGNAL perdu si tu tapes pendant la charge
+const BOSS_TAP_DMG = 3.4 // INTEGRITE par tap (× multiplicateur de cadence)
+const BOSS_RES_DMG = 9 // bonus d'INTEGRITE si le tap resonne
+
 // ---------------------------------------------------------------------------
 // Persistance locale (high-score + stages debloques)
 // ---------------------------------------------------------------------------
@@ -134,6 +143,7 @@ interface FloatLabel {
 
 interface StageProps {
   speed: number // 1 normal, 0.3 si reduced-motion
+  boss?: boolean // le moteur se resout en entite (combat de boss)
 }
 
 /* ==========================================================================
@@ -141,7 +151,7 @@ interface StageProps {
  * Lignes sinusoidales dephasees + ondes de tap. Rendu via state React.
  * ========================================================================*/
 const WaveformStage = memo(
-  forwardRef<StageHandle, StageProps>(function WaveformStage({ speed }, ref) {
+  forwardRef<StageHandle, StageProps>(function WaveformStage({ speed, boss }, ref) {
     const [phase, setPhase] = useState(0)
     // Kick : le tap fait gonfler l'onde a l'endroit touche (identite native du stage 1).
     // L'anneau resonnable, lui, est dessine par la couche FX commune aux 3 stages.
@@ -189,10 +199,12 @@ const WaveformStage = memo(
       return b
     }
 
+    // En combat, l'onde enfle et pulse — la porteuse « se resout » en entite menacante.
+    const bossAmp = boss ? 1.3 + 0.18 * Math.sin(phase * 2.2) : 1
     const buildPath = (freq: number, amp: number, off: number) => {
       let d = ''
       for (let x = 0; x <= 1000; x += 20) {
-        const a = amp + kickAt(x)
+        const a = (amp + kickAt(x)) * bossAmp
         const y =
           500 +
           a * Math.sin(x * freq + phase + off) +
@@ -825,11 +837,13 @@ const Hud = memo(function Hud({
   score,
   highScore,
   mult,
+  bossMode,
 }: {
   stageName: string
   score: number
   highScore: number
   mult: number
+  bossMode: boolean
 }) {
   const cell: React.CSSProperties = { display: 'flex', flexDirection: 'column', lineHeight: 1.1 }
   const label: React.CSSProperties = {
@@ -848,8 +862,10 @@ const Hud = memo(function Hud({
       }}
     >
       <div style={cell}>
-        <span style={label}>STAGE</span>
-        <span style={{ color: '#ffffff', fontSize: 15, fontWeight: 700 }}>{stageName}</span>
+        <span style={label}>{bossMode ? 'BOSS' : 'STAGE'}</span>
+        <span style={{ color: bossMode ? PALETTE.red : '#ffffff', fontSize: 15, fontWeight: 700 }}>
+          {stageName}
+        </span>
       </div>
       <div style={{ ...cell, alignItems: 'center' }}>
         <span style={label}>SCORE</span>
@@ -950,6 +966,58 @@ function FlowGauge({
             }}
           />
         )}
+      </div>
+    </div>
+  )
+}
+
+// Barres de combat : INTEGRITE (le boss, rouge = menace) + SIGNAL (ta vitalite).
+function BossBar({ integrite, signal, tell }: { integrite: number; signal: number; tell: boolean }) {
+  const sigLow = signal <= 35
+  const labelRow: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: 10,
+    letterSpacing: '0.18em',
+    color: 'rgba(255,255,255,0.55)',
+  }
+  return (
+    <div style={{ padding: '0 14px 12px' }}>
+      <div style={{ ...labelRow, marginBottom: 4 }}>
+        <span style={{ color: PALETTE.red, fontWeight: 700 }}>INTÉGRITÉ</span>
+        <span>{Math.round(integrite)}%</span>
+      </div>
+      <div
+        style={{
+          height: 12,
+          borderRadius: 6,
+          background: 'rgba(255,255,255,0.08)',
+          border: `1px solid ${tell ? PALETTE.red : 'rgba(255,255,255,0.12)'}`,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            height: '100%',
+            width: `${integrite}%`,
+            background: 'linear-gradient(90deg, rgba(255,255,255,0.5), #ffffff)',
+            transition: 'width 120ms linear',
+          }}
+        />
+      </div>
+      <div style={{ ...labelRow, margin: '6px 0 3px' }}>
+        <span>SIGNAL</span>
+        <span style={{ color: sigLow ? PALETTE.red : 'rgba(255,255,255,0.55)' }}>{Math.round(signal)}%</span>
+      </div>
+      <div style={{ height: 6, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+        <div
+          style={{
+            height: '100%',
+            width: `${signal}%`,
+            background: sigLow ? PALETTE.red : 'rgba(255,255,255,0.85)',
+            transition: 'width 120ms linear',
+          }}
+        />
       </div>
     </div>
   )
@@ -1149,6 +1217,13 @@ export default function TapTap() {
   const [glFailed, setGlFailed] = useState(false)
   const [whispered, setWhispered] = useState(false)
   const [srMsg, setSrMsg] = useState('')
+  // Combat de boss
+  const [bossName, setBossName] = useState<string | null>(null) // non-null = combat actif
+  const [bossIntegrite, setBossIntegrite] = useState(100)
+  const [bossSignal, setBossSignal] = useState(100)
+  const [bossTell, setBossTell] = useState(false)
+  const [purge, setPurge] = useState<number | null>(null) // % d'INTEGRITE restant a la purge
+  const bossRef = useRef<{ integrite: number; signal: number; tellUntil: number; nextTell: number } | null>(null)
 
   const engineRef = useRef<StageHandle>(null)
   const screenRef = useRef<HTMLDivElement>(null)
@@ -1213,8 +1288,8 @@ export default function TapTap() {
     const loop = (now: number) => {
       const dt = (now - last) / 1000
       last = now
-      // Gel apres BRUIT : ni gain ni decroissance (la jauge est figee).
-      if (now >= freezeUntilRef.current) {
+      // Gel apres BRUIT ou pendant un combat de boss : ni gain ni decroissance.
+      if (now >= freezeUntilRef.current && !bossRef.current) {
         const decay = contemplationRef.current ? DECAY_PER_SEC * 0.4 : DECAY_PER_SEC
         setFlow((f) => {
           const v = Math.max(0, f - decay * dt)
@@ -1238,19 +1313,11 @@ export default function TapTap() {
     return () => cancelAnimationFrame(raf)
   }, [booted])
 
-  const triggerStageUp = useCallback(() => {
-    if (flashingRef.current) return
-    const nextId = Math.min(stage.id + 1, topStageId)
-    // Ceremonie SEULEMENT pour un deblocage reellement nouveau. Re-remplir un
-    // stage deja ouvert plafonne le FLUX, sans flash / +500 / bascule (anti-farm).
-    if (nextId <= stage.id || nextId <= maxUnlocked) {
-      flowRef.current = FLUX_MAX
-      setFlow(FLUX_MAX)
-      return
-    }
+  // Ceremonie de deblocage (SEUIL → stage suivant). Reutilisee en direct OU apres un boss.
+  const doUnlock = useCallback((nextId: number) => {
     flashingRef.current = true
     ringsRef.current.length = 0 // le moteur change : les anneaux logiques meurent avec lui
-    setMaxUnlocked(nextId)
+    setMaxUnlocked((m) => Math.max(m, nextId))
     setStageIndex(nextId - 1)
     const sub = STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name
     setFlashSub(sub)
@@ -1262,7 +1329,83 @@ export default function TapTap() {
       flowRef.current = 14
       setFlow(14) // residu de FLUX sur la nouvelle couche
     }, FLASH_MS)
-  }, [stage.id, topStageId, maxUnlocked])
+  }, [])
+
+  const enterBoss = useCallback((name: string) => {
+    bossRef.current = { integrite: 100, signal: 100, tellUntil: 0, nextTell: 0 }
+    setBossIntegrite(100)
+    setBossSignal(100)
+    setBossTell(false)
+    flowRef.current = FLUX_MAX
+    setFlow(FLUX_MAX)
+    setSrMsg(`${name} apparait. Vide son integrite ; ne tape pas pendant la charge.`)
+    setBossName(name)
+  }, [])
+
+  const winBoss = useCallback(() => {
+    bossRef.current = null
+    setBossTell(false)
+    setBossName(null)
+    doUnlock(Math.min(stage.id + 1, topStageId))
+  }, [doUnlock, stage.id, topStageId])
+
+  const purgeBoss = useCallback(() => {
+    const rem = Math.round(bossRef.current?.integrite ?? 0)
+    bossRef.current = null
+    setBossTell(false)
+    setBossName(null)
+    setPurge(rem)
+    setSrMsg('Purge. Signal etranger efface.')
+  }, [])
+
+  const retryBoss = useCallback(() => {
+    const bn = BOSS_STAGES[stage.id]
+    setPurge(null)
+    if (bn) enterBoss(bn)
+  }, [enterBoss, stage.id])
+
+  const triggerStageUp = useCallback(() => {
+    if (flashingRef.current || bossRef.current) return
+    const nextId = Math.min(stage.id + 1, topStageId)
+    // Ceremonie SEULEMENT pour un deblocage reellement nouveau (anti-farm).
+    if (nextId <= stage.id || nextId <= maxUnlocked) {
+      flowRef.current = FLUX_MAX
+      setFlow(FLUX_MAX)
+      return
+    }
+    // Porte du boss : si ce stage a un boss auteur non encore battu, on l'invoque.
+    const bn = BOSS_STAGES[stage.id]
+    if (bn) {
+      enterBoss(bn)
+      return
+    }
+    doUnlock(nextId)
+  }, [stage.id, topStageId, maxUnlocked, enterBoss, doUnlock])
+
+  // Boucle du boss : cadence des « tells » (charges). Ne tourne que pendant le combat.
+  useEffect(() => {
+    if (!bossName) return
+    const b = bossRef.current
+    if (!b) return
+    b.nextTell = performance.now() + BOSS_TELL_EVERY
+    let raf = 0
+    const loop = (now: number) => {
+      if (b.tellUntil > 0) {
+        if (now > b.tellUntil) {
+          // La charge passe sans t'avoir touche : tu as esquive.
+          b.tellUntil = 0
+          setBossTell(false)
+          b.nextTell = now + BOSS_TELL_EVERY
+        }
+      } else if (now > b.nextTell) {
+        b.tellUntil = now + BOSS_TELL_DUR
+        setBossTell(true)
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [bossName])
 
   // Timer traque : nettoye au demontage (pas de setState post-unmount).
   const trackedTimeout = useCallback((fn: () => void, ms: number) => {
@@ -1408,6 +1551,38 @@ export default function TapTap() {
         ignitesRef.current.push({ ...hitRings[0], born: now, kind: 'res' })
       }
       if (ignitesRef.current.length > 8) ignitesRef.current.splice(0, ignitesRef.current.length - 8)
+
+      // L'anneau logique du tap (le bruit n'en cree pas : return plus haut).
+      rings.push({ x: nx, y: ny, born: now })
+      if (rings.length > 12) rings.shift()
+
+      // --- Combat de boss : le tap frappe l'INTEGRITE (sauf pendant la charge).
+      const b = bossRef.current
+      if (b) {
+        if (b.tellUntil > now) {
+          // Tu tapes pendant la charge rouge → l'onde tueuse te touche.
+          b.signal = Math.max(0, b.signal - BOSS_TELL_DMG)
+          setBossSignal(b.signal)
+          b.tellUntil = 0
+          setBossTell(false)
+          b.nextTell = now + BOSS_TELL_EVERY
+          pushLabel(nx, ny, '−signal', 'noise')
+          if (b.signal <= 0) purgeBoss()
+        } else {
+          const dmg = BOSS_TAP_DMG * m + (hits ? BOSS_RES_DMG : 0)
+          b.integrite = Math.max(0, b.integrite - dmg)
+          setBossIntegrite(b.integrite)
+          if (b.integrite <= 0) winBoss()
+        }
+        setScore((s) => {
+          const ns = s + pts
+          setHighScore((h) => (ns > h ? ns : h))
+          return ns
+        })
+        return
+      }
+
+      // --- Jeu normal : le tap remplit le FLUX.
       const raw = flowRef.current + fluxGain
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
@@ -1418,21 +1593,21 @@ export default function TapTap() {
         setHighScore((h) => (ns > h ? ns : h))
         return ns
       })
-
-      // L'anneau logique du tap (le bruit n'en cree pas : return plus haut).
-      rings.push({ x: nx, y: ny, born: now })
-      if (rings.length > 12) rings.shift()
     },
-    [triggerStageUp, pushLabel],
+    [triggerStageUp, pushLabel, purgeBoss, winBoss],
   )
 
   // Le premier contact reveille la borne ET pulse au point touche.
   const tapAt = useCallback(
     (nx: number, ny: number) => {
+      if (purge !== null) {
+        retryBoss() // l'ecran de PURGE : un tap relance le combat
+        return
+      }
       if (!booted) setBooted(true)
       registerTap(Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny)))
     },
-    [booted, registerTap],
+    [booted, registerTap, purge, retryBoss],
   )
 
   const handlePointerDown = useCallback(
@@ -1518,8 +1693,18 @@ export default function TapTap() {
           overflow: 'hidden',
         }}
       >
-        <Hud stageName={stage.name} score={score} highScore={highScore} mult={mult} />
-        <FlowGauge flow={flow} frozen={frozenUi} freezeSeq={freezeSeq} beat={beat} reduced={reduced} />
+        <Hud
+          stageName={bossName ?? stage.name}
+          score={score}
+          highScore={highScore}
+          mult={mult}
+          bossMode={!!bossName}
+        />
+        {bossName ? (
+          <BossBar integrite={bossIntegrite} signal={bossSignal} tell={bossTell} />
+        ) : (
+          <FlowGauge flow={flow} frozen={frozenUi} freezeSeq={freezeSeq} beat={beat} reduced={reduced} />
+        )}
 
         {/* Ecran CRT bombe — surface de jeu unique (eveil + jeu) */}
         <div style={{ position: 'relative', flex: 1, margin: '0 14px', minHeight: 0 }}>
@@ -1546,7 +1731,9 @@ export default function TapTap() {
               boxShadow: 'inset 0 0 80px rgba(0,0,0,0.9)',
             }}
           >
-            {stage.engine === 'svg' && <WaveformStage ref={engineRef} speed={speed} />}
+            {stage.engine === 'svg' && (
+              <WaveformStage ref={engineRef} speed={speed} boss={!!bossName} />
+            )}
             {stage.engine === 'canvas' && <MandalaStage ref={engineRef} speed={speed} />}
             {stage.engine === 'webgl' && (
               <LiquidStage ref={engineRef} speed={speed} onGlError={handleGlError} />
@@ -1591,6 +1778,76 @@ export default function TapTap() {
                 {l.text}
               </div>
             ))}
+
+            {/* Charge du boss : bord rouge pulsant — le danger. NE PAS taper. */}
+            {bossTell && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  zIndex: 14,
+                  boxShadow: `inset 0 0 60px 8px ${PALETTE.red}`,
+                  animation: reduced ? 'none' : 'tt-tell 0.6s ease-in-out infinite',
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    bottom: 18,
+                    textAlign: 'center',
+                    fontFamily: 'ui-monospace, monospace',
+                    fontSize: 'clamp(11px, 3vw, 14px)',
+                    letterSpacing: '0.06em',
+                    color: PALETTE.red,
+                    textShadow: '0 1px 8px rgba(5,1,13,0.9)',
+                  }}
+                >
+                  l'onde monte — ne tape pas
+                </div>
+              </div>
+            )}
+
+            {/* PURGE : echec du combat. Un tap relance (gere par tapAt). */}
+            {purge !== null && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  background: 'rgba(10,10,12,0.82)',
+                  pointerEvents: 'none',
+                  zIndex: 25,
+                  fontFamily: 'ui-monospace, monospace',
+                }}
+              >
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: 'clamp(28px, 9vw, 60px)',
+                    letterSpacing: '0.14em',
+                    color: PALETTE.red,
+                    textShadow: `0 0 24px ${PALETTE.red}`,
+                  }}
+                >
+                  PURGE.
+                </div>
+                <div style={{ fontSize: 'clamp(11px, 3vw, 14px)', color: 'rgba(255,255,255,0.7)' }}>
+                  signal étranger effacé. l'hôte se rendort.
+                </div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
+                  il lui restait {purge}% — pose un doigt pour persister
+                </div>
+              </div>
+            )}
 
             {flashSub && <StageUpFlash sub={flashSub} reduced={reduced} />}
 
@@ -1681,6 +1938,10 @@ const KEYFRAMES = `
   0% { box-shadow: 0 0 0 rgba(0,240,255,0); }
   30% { box-shadow: 0 0 9px rgba(0,240,255,0.5); }
   100% { box-shadow: 0 0 0 rgba(0,240,255,0); }
+}
+@keyframes tt-tell {
+  0%, 100% { box-shadow: inset 0 0 40px 4px rgba(255,59,48,0.55); }
+  50% { box-shadow: inset 0 0 75px 14px rgba(255,59,48,0.95); }
 }
 .tt-screen:focus-visible {
   outline: 2px solid #ffffff;

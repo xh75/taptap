@@ -1,7 +1,9 @@
 # TAP·TAP — Matrice des paliers & boss
 
-> **Statut : design en cours** (2026-07-11). Concept validé, mécanique à équilibrer, non implémenté.
-> Cadre narratif : **V3 · L'Intrus**. Combat : **réel, avec état d'échec**. Nouveau signal : **rouge = menace**.
+> **Statut** (2026-07-13) : cadre narratif **V3 · L'Intrus**, combat **réel avec échec**, signal **rouge = menace**.
+> **LA PORTEUSE (palier 1) — IMPLÉMENTÉE** (premier jet jouable, à équilibrer). LE ROUAGE / LE NOYAU : à venir.
+>
+> **Réglages à faire (playtest) :** le combat est actuellement **trop facile** — l'INTÉGRITÉ tombe en ~5 s (taps hors charge à 3,4×mult), les *tells* sont rares (3,5 s) et sans conséquence si on les ignore. Pistes : ↑ INTÉGRITÉ, ↓ dégâts par tap, *tells* plus fréquents, et un *tell* non contré devrait coûter quelque chose (drain passif de SIGNAL) plutôt que rien. Détail : spammer (bruit) pendant une charge n'inflige rien et ne punit pas (l'anti-spam court-circuite avant la logique de combat).
 
 ## Prémisse — L'Intrus
 
