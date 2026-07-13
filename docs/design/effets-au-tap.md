@@ -2,6 +2,14 @@
 
 > **Statut : implémenté** (premier jet, 2026-07-13). La raison d'être de l'app : le tap doit se *sentir*.
 > Décisions Xavier : **intensité = ton flux** · **anneau overlay unifié** · **sobre & élégant**.
+>
+> **⚠ Mise à jour 2026-07-13 (simplification du cœur de boucle)** — après playtest
+> (« pas compréhensible »), la mécanique a été simplifiée : plus de RÉSONANCE /
+> INTERFÉRENCE positionnelles, plus de décroissance du FLUX, plus d'anti-spam. La
+> **couche FX reste** (anneau au tap, flash d'impact, bloom de cadence, respiration
+> au repos, crête de boss) : c'est l'esthétique qui persiste. Ce qui disparaît, c'est
+> l'*embrasement résonance/interférence* et l'anneau « résonnable » (l'anneau est
+> désormais un simple retour visuel du tap, la teinte suivant la SÉRIE ×1→×4).
 
 ## Principe
 

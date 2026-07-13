@@ -2,7 +2,16 @@
 title: 'Grammaire des combos (CADENCE / RÉSONANCE / INTERFÉRENCE / LE BRUIT)'
 type: 'feature'
 created: '2026-07-13'
-status: 'done'
+status: 'superseded'
+superseded_note: >
+  2026-07-13 — Playtest sur vrai téléphone : « le jeu n'est pas compréhensible ».
+  Décision Xavier : SIMPLIFIER radicalement le cœur de boucle. La grammaire
+  décrite ici (tempo précis, RÉSONANCE/INTERFÉRENCE positionnelles, anti-spam
+  LE BRUIT avec gel rouge, décroissance du FLUX) est RETIRÉE du jeu.
+  Modèle actuel (cf. src/TapTap.tsx) : chaque tap REMPLIT la barre (FILL_PER_TAP),
+  le FLUX ne redescend jamais, taper vite n'est jamais puni. Seule survit une
+  SÉRIE indulgente (taps rapprochés → multiplicateur couleur + petit bonus) qui
+  retombe sans pénalité après une pause. 100 % → SEUIL (ou boss de palier).
 review_loop_iteration: 0
 baseline_commit: 'c3fc6163109c0db9ae9615e39ffba3ec4da3d831'
 context:

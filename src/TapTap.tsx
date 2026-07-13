@@ -44,29 +44,17 @@ const STAGES: StageDef[] = [
 
 // Reglages de jeu -----------------------------------------------------------
 const FLUX_MAX = 100
-const DECAY_PER_SEC = 9 // vitesse de descente de la jauge au repos
 const FLASH_MS = 950 // duree du flash SEUIL
 const STORAGE_KEY = 'taptap.save.v1'
 
-// Grammaire des combos (source de verite : docs/design/combos-et-interstices.md)
-// « Un signal propre se propage ; le bruit se fait purger. »
-const TEMPO_MIN = 250 // ms — un tempo se joue entre 250 et 600 ms
-const TEMPO_MAX = 600
-const TEMPO_TOL = 80 // ms de tolerance autour du tempo etabli
-const TEMPO_TOL_ASSIST = 120 // tolerance elargie en prefers-reduced-motion
-const NOISE_GAP = 120 // ms — en-dessous, le tap est du BRUIT
-const NOISE_RATE = 8 // taps max par fenetre glissante de 1 s
-const FREEZE_MS = 1000 // gel de la jauge apres detection du bruit
-const RING_LIFE = 1200 // ms de vie d'un anneau logique
-const RING_RMAX = 0.38 // rayon max en espace normalise (calque sur le ripple SVG)
-const RING_TOL = 0.045 // demi-bande de detection RESONANCE
-const RING_MIN_AGE = 150 // ms avant qu'un anneau devienne resonnable
-const GAIN_BASE = 1.2 // % de FLUX par PULSATION (avant multiplicateur)
-const GAIN_RESONANCE = 3 // % bonus RESONANCE
-const GAIN_INTERFERENCE = 6 // % bonus INTERFERENCE (remplace la resonance)
+// Remplissage SIMPLE et lisible : chaque tap remplit la barre, sans jamais de perte
+// ni de piege. Calibre pour un pouce humain (~24 taps a la base pour 100 %, plus vite
+// en serie). Taper vite AIDE, n'est jamais puni.
+const FILL_PER_TAP = 4.2 // % de FLUX par tap (avant petit bonus de serie)
+const STREAK_WINDOW = 650 // ms : taper avant ce delai continue la serie (indulgent)
 const PTS_BASE = 10
-const PTS_RESONANCE = 150
-const PTS_INTERFERENCE = 500
+const RING_LIFE = 1200 // ms de vie d'un anneau (retour visuel du tap)
+const RING_RMAX = 0.38 // rayon max normalise de l'anneau
 
 // Boss de fin de palier (cf. docs/design/matrice-boss.md, cadre « L'Intrus »).
 // Seuls les stages listes ont un boss auteur ; les autres gardent le SEUIL direct.
@@ -77,7 +65,6 @@ const BOSS_BAND = 0.15 // demi-hauteur (normalisee) de la crete dangereuse
 const BOSS_TELL_DMG = 18 // SIGNAL perdu par tap DANS la crete rouge
 const BOSS_HIT_IFRAME = 300 // ms d'invulnerabilite apres un coup encaisse
 const BOSS_TAP_DMG = 0.22 // INTEGRITE par tap (× multiplicateur) — combat ~20-25 s
-const BOSS_RES_DMG = 1 // bonus d'INTEGRITE si le tap resonne
 
 // Position (y normalise) de la crete pendant une charge : elle balaie de haut en bas.
 function bossDangerY(tellStart: number, tellUntil: number, now: number): number {
@@ -921,7 +908,7 @@ const Hud = memo(function Hud({
         </span>
         {mult > 1 && (
           <span style={{ color: PALETTE.green, fontSize: 12, fontWeight: 700, marginTop: 2 }}>
-            x{mult} CADENCE
+            SÉRIE ×{mult}
           </span>
         )}
       </div>
@@ -931,14 +918,10 @@ const Hud = memo(function Hud({
 
 function FlowGauge({
   flow,
-  frozen,
-  freezeSeq,
   beat,
   reduced,
 }: {
   flow: number
-  frozen: boolean
-  freezeSeq: number
   beat: number
   reduced: boolean
 }) {
@@ -964,7 +947,6 @@ function FlowGauge({
       </div>
       <div style={{ position: 'relative' }}>
         <div
-          key={freezeSeq} // remonte a chaque detection : l'animation tt-noise rejoue
           role="progressbar"
           aria-label="FLUX"
           aria-valuenow={rounded}
@@ -974,9 +956,7 @@ function FlowGauge({
             height: 12,
             borderRadius: 6,
             background: 'rgba(255,255,255,0.08)',
-            // Detection du bruit : liseré rouge (menace), clignotant sauf reduced-motion.
-            border: frozen ? `1px solid ${PALETTE.red}` : '1px solid rgba(255,255,255,0.12)',
-            animation: frozen && !reduced ? 'tt-noise 0.5s linear 2' : 'none',
+            border: '1px solid rgba(255,255,255,0.12)',
             overflow: 'hidden',
           }}
         >
@@ -993,8 +973,8 @@ function FlowGauge({
             }}
           />
         </div>
-        {/* Respiration au tempo du joueur : glow pulse a chaque tap dans la cadence. */}
-        {!reduced && !frozen && (
+        {/* La jauge respire : un glow pulse a chaque tap. */}
+        {!reduced && (
           <div
             key={beat}
             aria-hidden="true"
@@ -1248,9 +1228,7 @@ export default function TapTap() {
   const [maxUnlocked, setMaxUnlocked] = useState(saved.maxUnlocked)
   const [flow, setFlow] = useState(0)
   const [mult, setMult] = useState(1)
-  const [frozenUi, setFrozenUi] = useState(false)
-  const [freezeSeq, setFreezeSeq] = useState(0) // re-declenche l'animation de detection
-  const [beat, setBeat] = useState(0) // pulsation de la jauge au tempo du joueur (indice de decouverte)
+  const [beat, setBeat] = useState(0) // pulsation de la jauge a chaque tap (la jauge respire)
   const [labels, setLabels] = useState<FloatLabel[]>([])
   const [score, setScore] = useState(0)
   const [highScore, setHighScore] = useState(saved.highScore)
@@ -1271,40 +1249,25 @@ export default function TapTap() {
   const lastTapRef = useRef(0)
   const flashingRef = useRef(false)
   const flowRef = useRef(0) // miroir synchrone du FLUX (detection de seuil pure)
-  // Grammaire des combos — etat chaud en refs (jamais de re-render 60 fps).
-  const tempoRef = useRef<number | null>(null) // T du joueur (moyenne glissante)
-  const chainRef = useRef(0) // taps enchaines dans le tempo
+  // Etat chaud en refs (jamais de re-render 60 fps).
+  const streakRef = useRef(0) // taps rapproches enchaines (SERIE) — pilote le multiplicateur
   const multRef = useRef(1) // miroir du multiplicateur affiche
   const ringsRef = useRef<{ x: number; y: number; born: number }[]>([])
   const impactsRef = useRef<Impact[]>([]) // flashs d'impact (couche FX)
-  const ignitesRef = useRef<Ignite[]>([]) // embrasements resonance/interference (couche FX)
-  const tapTimesRef = useRef<number[]>([]) // fenetre glissante 1 s (detection du taux)
-  const freezeUntilRef = useRef(0) // gel de la jauge apres BRUIT
-  const freezeTimeoutRef = useRef(0) // timeout du degel UI (annule/rearme a chaque detection)
-  const prevValidRef = useRef(false) // le tap precedent peut-il ancrer un tempo ?
-  const noiseLabelUntilRef = useRef(0) // throttle de l'etiquette 'bruit.'
+  const ignitesRef = useRef<Ignite[]>([]) // embrasements (couche FX, reserve au combat)
   const labelIdRef = useRef(0)
   const timeoutsRef = useRef<Set<number>>(new Set()) // timers traques (nettoyes au demontage)
   const reducedRef = useRef(reduced)
 
-  // Miroirs mis a jour hors rendu (purete du rendu) + reduced-motion leve le gel.
+  // Miroir de reduced-motion, mis a jour hors rendu (purete du rendu).
   useEffect(() => {
     reducedRef.current = reduced
-    if (reduced) {
-      freezeUntilRef.current = 0
-      window.clearTimeout(freezeTimeoutRef.current)
-      setFrozenUi(false)
-    }
   }, [reduced])
 
   const stage = STAGES[stageIndex]
   const topStageId = glFailed ? 2 : 3
   // Contemplation : les trois couches ouvertes, au sommet accessible, hors panne.
   const contemplation = maxUnlocked >= topStageId && stage.id === topStageId && !glFailed
-  const contemplationRef = useRef(contemplation)
-  useEffect(() => {
-    contemplationRef.current = contemplation
-  }, [contemplation])
 
   // Murmure de contemplation : une fois par entree (ne clignote pas au fil des taps).
   useEffect(() => {
@@ -1321,28 +1284,17 @@ export default function TapTap() {
     return () => window.clearTimeout(id)
   }, [highScore, maxUnlocked])
 
-  // Boucle de jeu : descente de la jauge + expiration du combo.
+  // Boucle de jeu : la SEULE mecanique de repos est la retombee de la SERIE.
+  // Le FLUX ne redescend JAMAIS tout seul : la barre ne fait que se remplir, tap
+  // apres tap, jusqu'au SEUIL. Rien ne punit une pause (choix de lisibilite Xavier).
   useEffect(() => {
     if (!booted) return
     let raf = 0
-    let last = performance.now()
     const loop = (now: number) => {
-      const dt = (now - last) / 1000
-      last = now
-      // Gel apres BRUIT ou pendant un combat de boss : ni gain ni decroissance.
-      if (now >= freezeUntilRef.current && !bossRef.current) {
-        const decay = contemplationRef.current ? DECAY_PER_SEC * 0.4 : DECAY_PER_SEC
-        setFlow((f) => {
-          const v = Math.max(0, f - decay * dt)
-          flowRef.current = v
-          return v
-        })
-      }
-      // Silence plus long que le tempo + tolerance : la cadence retombe (sans penalite).
-      const tol = reducedRef.current ? TEMPO_TOL_ASSIST : TEMPO_TOL
-      if (chainRef.current > 0 && now - lastTapRef.current > (tempoRef.current ?? TEMPO_MAX) + tol) {
-        chainRef.current = 0
-        tempoRef.current = null
+      // Silence plus long que la fenetre de serie : la cadence (couleur + bonus)
+      // retombe a 1 — sans jamais toucher au FLUX ni au score.
+      if (streakRef.current > 0 && now - lastTapRef.current > STREAK_WINDOW) {
+        streakRef.current = 0
         if (multRef.current !== 1) {
           multRef.current = 1
           setMult(1)
@@ -1461,7 +1413,6 @@ export default function TapTap() {
   useEffect(() => {
     const timeouts = timeoutsRef.current
     return () => {
-      window.clearTimeout(freezeTimeoutRef.current)
       timeouts.forEach((id) => window.clearTimeout(id))
       timeouts.clear()
     }
@@ -1481,122 +1432,36 @@ export default function TapTap() {
   const registerTap = useCallback(
     (nx: number, ny: number) => {
       if (flashingRef.current) return
-      engineRef.current?.tap(nx, ny) // le moteur pulse TOUJOURS (le jouet repond), recompense ou pas
+      engineRef.current?.tap(nx, ny) // le moteur pulse toujours (retour immediat du tap)
 
       const now = performance.now()
       const gap = now - lastTapRef.current
       const hadPrev = lastTapRef.current > 0
       lastTapRef.current = now
 
-      // --- LE BRUIT : ecart trop court ou taux trop haut → la machine te detecte.
-      const times = tapTimesRef.current
-      times.push(now)
-      while (times.length && now - times[0] > 1000) times.shift()
-      if (hadPrev && (gap < NOISE_GAP || times.length > NOISE_RATE)) {
-        chainRef.current = 0
-        tempoRef.current = null
-        prevValidRef.current = false // un tap puni n'ancre jamais le tempo suivant
-        if (multRef.current !== 1) {
-          multRef.current = 1
-          setMult(1)
-        }
-        if (now >= noiseLabelUntilRef.current) {
-          noiseLabelUntilRef.current = now + 800
-          pushLabel(nx, ny, 'bruit.', 'noise')
-        }
-        if (!reducedRef.current) {
-          // Detection simple : jauge figee 1 s (ni gain ni decroissance) + liseré rouge.
-          // Re-detection : le timeout precedent est annule, l'animation rejoue (freezeSeq).
-          freezeUntilRef.current = now + FREEZE_MS
-          setFrozenUi(true)
-          setFreezeSeq((s) => s + 1)
-          window.clearTimeout(freezeTimeoutRef.current)
-          freezeTimeoutRef.current = window.setTimeout(() => setFrozenUi(false), FREEZE_MS)
-        }
-        return // 0 point, 0 FLUX
-      }
-
-      // --- Gel actif : le tap est inerte (le moteur a pulse, rien d'autre).
-      // Pas de pre-armement de chaine ni d'anneau pendant la detection.
-      if (!reducedRef.current && now < freezeUntilRef.current) {
-        prevValidRef.current = false
-        return
-      }
-
-      // --- CADENCE : tenir SON tempo (etabli par 2 taps valides, suivi en moyenne
-      // glissante CLAMPEE a [TEMPO_MIN, TEMPO_MAX] — la derive ne re-ouvre pas le spam).
-      const tol = reducedRef.current ? TEMPO_TOL_ASSIST : TEMPO_TOL
-      if (tempoRef.current !== null && Math.abs(gap - tempoRef.current) <= tol) {
-        chainRef.current += 1
-        tempoRef.current = Math.min(
-          TEMPO_MAX,
-          Math.max(TEMPO_MIN, 0.7 * tempoRef.current + 0.3 * gap),
-        )
-        setBeat((b) => b + 1) // tap dans le tempo → la jauge respire (indice de decouverte)
-      } else if (
-        tempoRef.current === null &&
-        hadPrev &&
-        prevValidRef.current &&
-        gap >= TEMPO_MIN &&
-        gap <= TEMPO_MAX
-      ) {
-        tempoRef.current = gap // ce tap + le precedent (valide) etablissent le tempo
-        chainRef.current = 2
-      } else {
-        // Rompre le tempo = repartir a 1 (spec) ; ce tap pourra ancrer le suivant.
-        tempoRef.current = null
-        chainRef.current = 1
-      }
-      prevValidRef.current = true
-      const chain = chainRef.current
-      const m = chain >= 16 ? 4 : chain >= 8 ? 3 : chain >= 4 ? 2 : 1
+      // SÉRIE : taper en continu (taps rapproches) fait monter l'intensite (couleur + petit
+      // bonus). Totalement INDULGENT : une pause remet a zero, on ne PERD jamais de FLUX,
+      // taper vite n'est JAMAIS puni. C'est l'inverse de l'ancien anti-spam.
+      streakRef.current = hadPrev && gap < STREAK_WINDOW ? streakRef.current + 1 : 1
+      const s0 = streakRef.current
+      const m = s0 >= 18 ? 4 : s0 >= 10 ? 3 : s0 >= 4 ? 2 : 1
       if (m !== multRef.current) {
         multRef.current = m
         setMult(m)
       }
+      setBeat((bb) => bb + 1) // la jauge respire a chaque tap
 
-      // --- RESONANCE / INTERFERENCE : taper sur ses propres anneaux.
-      // Espace normalise [0,1]² etire — coherent avec le rendu (preserveAspectRatio=none).
+      // Retour visuel : flash d'impact + anneau (l'intensite de serie colore l'ensemble).
+      impactsRef.current.push({ x: nx, y: ny, born: now, mult: m })
+      if (impactsRef.current.length > 24) impactsRef.current.shift()
       const rings = ringsRef.current
       for (let i = rings.length - 1; i >= 0; i--) {
         if (now - rings[i].born > RING_LIFE) rings.splice(i, 1)
       }
-      const hitRings: { x: number; y: number; rad: number }[] = []
-      for (const r of rings) {
-        const age = now - r.born
-        if (age < RING_MIN_AGE) continue
-        const rad = RING_RMAX * (age / RING_LIFE)
-        const d = Math.hypot(nx - r.x, ny - r.y)
-        if (Math.abs(d - rad) <= RING_TOL) hitRings.push({ x: r.x, y: r.y, rad })
-      }
-      const hits = hitRings.length
-
-      // Flash d'impact au point touche (couche FX, intensite = cadence).
-      impactsRef.current.push({ x: nx, y: ny, born: now, mult: m })
-      if (impactsRef.current.length > 24) impactsRef.current.shift()
-
-      // --- Gains (le gel est deja sorti plus haut).
-      let fluxGain = GAIN_BASE * m
-      let pts = PTS_BASE * m
-      if (hits >= 2) {
-        fluxGain += GAIN_INTERFERENCE
-        pts += PTS_INTERFERENCE
-        pushLabel(nx, ny, '+6 %', 'gain')
-        // Les deux anneaux s'embrasent en blanc (couche FX).
-        ignitesRef.current.push({ ...hitRings[0], born: now, kind: 'inter' })
-        ignitesRef.current.push({ ...hitRings[1], born: now, kind: 'inter' })
-      } else if (hits === 1) {
-        fluxGain += GAIN_RESONANCE
-        pts += PTS_RESONANCE
-        pushLabel(nx, ny, '+3 %', 'gain')
-        // L'anneau resonne s'embrase (magenta → blanc, couche FX).
-        ignitesRef.current.push({ ...hitRings[0], born: now, kind: 'res' })
-      }
-      if (ignitesRef.current.length > 8) ignitesRef.current.splice(0, ignitesRef.current.length - 8)
-
-      // L'anneau logique du tap (le bruit n'en cree pas : return plus haut).
       rings.push({ x: nx, y: ny, born: now })
       if (rings.length > 12) rings.shift()
+
+      const pts = PTS_BASE * m
 
       // --- Combat de boss : la crete rouge balaie ; tape dans les creux.
       const b = bossRef.current
@@ -1604,7 +1469,6 @@ export default function TapTap() {
         const inTell = b.tellUntil > now
         const inCrest = inTell && Math.abs(ny - bossDangerY(b.tellStart, b.tellUntil, now)) < BOSS_BAND
         if (inCrest) {
-          // Tap DANS la crete rouge → tu encaisses (i-frames pour ne pas mourir d'un coup).
           if (now > b.lastHit + BOSS_HIT_IFRAME) {
             b.signal = Math.max(0, b.signal - BOSS_TELL_DMG)
             b.lastHit = now
@@ -1613,28 +1477,27 @@ export default function TapTap() {
             if (b.signal <= 0) purgeBoss()
           }
         } else {
-          // Creux (ou hors charge) → tu blesses le boss. Frapper pendant la charge = bonus.
-          const dmg = BOSS_TAP_DMG * m + (hits ? BOSS_RES_DMG : 0) + (inTell ? 1 : 0)
+          const dmg = BOSS_TAP_DMG * m + (inTell ? 1 : 0)
           b.integrite = Math.max(0, b.integrite - dmg)
           setBossIntegrite(b.integrite)
           if (b.integrite <= 0) winBoss()
         }
-        setScore((s) => {
-          const ns = s + pts
+        setScore((sc) => {
+          const ns = sc + pts
           setHighScore((h) => (ns > h ? ns : h))
           return ns
         })
         return
       }
 
-      // --- Jeu normal : le tap remplit le FLUX.
-      const raw = flowRef.current + fluxGain
+      // --- Jeu normal : chaque tap REMPLIT la barre (progressif, jamais de perte).
+      const raw = flowRef.current + FILL_PER_TAP * (1 + (m - 1) * 0.2)
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
       setFlow(nf)
-      if (raw >= FLUX_MAX) triggerStageUp() // detection synchrone via flowRef (pur)
-      setScore((s) => {
-        const ns = s + pts
+      if (raw >= FLUX_MAX) triggerStageUp()
+      setScore((sc) => {
+        const ns = sc + pts
         setHighScore((h) => (ns > h ? ns : h))
         return ns
       })
@@ -1748,7 +1611,7 @@ export default function TapTap() {
         {bossName ? (
           <BossBar integrite={bossIntegrite} signal={bossSignal} tell={bossTell} />
         ) : (
-          <FlowGauge flow={flow} frozen={frozenUi} freezeSeq={freezeSeq} beat={beat} reduced={reduced} />
+          <FlowGauge flow={flow} beat={beat} reduced={reduced} />
         )}
 
         {/* Ecran CRT bombe — surface de jeu unique (eveil + jeu) */}
@@ -1976,14 +1839,10 @@ const KEYFRAMES = `
   20% { opacity: 1; }
   100% { opacity: 0; transform: translate(-50%, -240%); }
 }
-@keyframes tt-noise {
-  0%, 100% { box-shadow: 0 0 10px rgba(255,59,48,0.55); }
-  50% { box-shadow: 0 0 0 rgba(255,59,48,0); }
-}
 @keyframes tt-beat {
-  0% { box-shadow: 0 0 0 rgba(0,240,255,0); }
-  30% { box-shadow: 0 0 9px rgba(0,240,255,0.5); }
-  100% { box-shadow: 0 0 0 rgba(0,240,255,0); }
+  0% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+  30% { box-shadow: 0 0 9px rgba(255,255,255,0.45); }
+  100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
 }
 @keyframes tt-tell {
   0%, 100% { box-shadow: inset 0 0 40px 4px rgba(255,59,48,0.55); }
