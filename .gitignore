@@ -21,3 +21,8 @@ pnpm-debug.log*
 
 # Vercel
 .vercel/
+
+# BMAD (outillage agents IA — local, régénérable via « npx bmad-method install »)
+_bmad/
+_bmad-output/
+.claude/
