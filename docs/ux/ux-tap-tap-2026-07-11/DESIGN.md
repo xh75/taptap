@@ -1,19 +1,21 @@
 ---
 name: TAP·TAP
-description: Borne d'arcade générative psychédélique. Une seule surface — le téléphone, tenu à la verticale. On tape le verre, le FLUX monte, trois moteurs de rendu se dévoilent. Noir profond, néon, aucune couleur décorative.
+description: Borne d'arcade générative. Une seule surface — le téléphone, tenu à la verticale. On tape le verre, le FLUX monte, trois moteurs de rendu se dévoilent. Noir & blanc ; la couleur ne surgit que sur les combos et les événements.
 status: final
-updated: 2026-07-11
+updated: 2026-07-13
 colors:
-  void: '#0a0118'
-  cabinet: '#05010d'
-  panel: '#120826'
-  magenta: '#ff2e97'
-  cyan: '#00f0ff'
-  amber: '#ffd600'
-  green: '#39ff14'
+  # Base monochrome
+  void: '#0a0a0c'
+  cabinet-top: '#141416'
+  cabinet-bottom: '#050506'
   ink-100: 'rgba(255,255,255,0.75)'
-  ink-60: 'rgba(255,255,255,0.45)'
+  ink-60: 'rgba(255,255,255,0.55)'
   ink-30: 'rgba(255,255,255,0.30)'
+  # Palette-récompense (combos/événements uniquement)
+  magenta: '#ff2e97' # cadence x2
+  cyan: '#00f0ff' # cadence x3
+  green: '#39ff14' # cadence x4 · SEUIL · gains
+  red: '#ff3b30' # détection · boss/danger
 typography:
   family: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
   hud-label: { size: 10px, tracking: 0.18em, case: UPPER, color: ink-60 }
@@ -37,28 +39,32 @@ spacing:
 
 TAP·TAP se déguise en borne d'arcade des années 90 pour livrer, en réalité, un générateur d'esthétiques psychédéliques. Le ton n'est pas nostalgique-kitsch : c'est un objet de culte sombre. Le verre bombé, les scanlines et le boot ne sont pas des gadgets rétro — ils cadrent le visuel comme une **relique qui s'éveille sous le doigt**.
 
-La règle qui gouverne tout : **la couleur est un signal, jamais une décoration.** Le fond est un noir violacé quasi absolu (`void`) ; les néons ne servent qu'à dire quelque chose — magenta = présence/stage courant, cyan = mouvement/énergie, amber = trace chiffrée (score), green = franchissement/FLUX. Rien ne « fait joli » sans porter un sens. Le psychédélisme vit dans les **moteurs de rendu** (ondes, couronnes, flux), pas dans l'habillage.
+La règle qui gouverne tout : **noir & blanc par défaut ; la couleur ne surgit que sur les combos et les événements.** Le monde de TAP·TAP est monochrome — un objet de culte sombre, gris sur noir. La couleur est **rare et signifiante** : elle *saigne* dans l'écran quand tu entres en flux (cadence, résonance) ou qu'un événement éclate (seuil, détection, boss). Le gris est le repos ; la couleur est la vie. Rien ne « fait joli » : une teinte qui s'allume répond toujours à *pourquoi ici, maintenant*.
 
 Surface unique et assumée : **le téléphone en portrait**, tenu à une main, tapé au pouce. Tout est calibré pour ça.
 
 ## Colors
 
-Palette FIXE (aucun mode clair, aucun thème alternatif — le noir profond est l'identité).
+**Base monochrome.** Aucun mode clair, aucun thème. Tout le persistant est en niveaux de gris sur noir :
 
-- **Void (`#0a0118`)** — l'écran, le vide d'où naît le visuel. Le fond de tout rendu.
-- **Cabinet (`#05010d`) / Panel (`#120826`)** — la coque de la borne autour de l'écran ; dégradé sombre qui isole l'écran du reste du monde.
-- **Magenta (`#ff2e97`)** — la présence : nom du stage courant, ondes SVG, onde de tap (WAVEFORM). La couleur « toi, ici, maintenant ». (La bordure du stage *actif* prend la couleur du stage — voir Components.)
-- **Cyan (`#00f0ff`)** — le mouvement : jauge en charge, boot, couronnes ambiantes du mandala.
-- **Amber (`#ffd600`)** — la trace : le SCORE et lui seul. Chiffres qui s'accumulent.
-- **Green (`#39ff14`)** — le franchissement : FLUX plein, flash de seuil, combos, focus clavier, déblocage. La couleur de la bascule.
+- **Void (`#0a0a0c`)** — noir neutre, le fond de tout rendu.
+- **Coque** — dégradé gris-noir (`#141416`→`#050506`) autour de l'écran.
+- **Blancs & gris** — moteurs (ondes, couronnes, flux marbré), HUD (stage, score, high), jauge FLUX, boot, sélecteur : blanc pur → gris, distincts par la **clarté**, jamais la teinte.
 
-Interdits : tout rouge (TAP·TAP ne connaît pas l'erreur-formulaire — un échec se dit dans la voix, pas dans une pastille rouge) ; toute couleur pastel ou désaturée ; tout néon employé « pour habiller ». Un néon allumé doit toujours répondre à *pourquoi ici*.
+**Palette-récompense** (la couleur, uniquement sur combos/événements — un signal, jamais un décor) :
+
+- **Cadence** — la teinte *encode le palier de flux* : ×2 **magenta `#ff2e97`** → ×3 **cyan `#00f0ff`** → ×4 **green `#39ff14`**. Anneaux, flash d'impact et voile d'ambiance se colorent avec le multiplicateur. Au repos (×1) : blanc.
+- **Résonance / interférence** — embrasement coloré de l'anneau touché (événement de combo).
+- **Green (`#39ff14`)** — le franchissement : FLUX plein, flash **SEUIL**, gains (`+3 %`), jauge « chaude » (seuil imminent), respiration de la jauge au tempo.
+- **Red (`#ff3b30`)** — la menace : **détection du bruit** (anti-spam), dégâts et **boss/danger** (à venir). Le seul rouge, jamais décoratif.
+
+Interdits : toute couleur **persistante** ou décorative (un néon allumé en permanence, un habillage teinté) ; toute couleur pastel ou désaturée. La couleur doit toujours être *déclenchée* par un combo ou un événement.
 
 ## Typography
 
 Monospace système partout — la borne pense en caractères de terminal. Deux registres seulement :
 
-- **HUD (technique)** : `hud-label` en capitales espacées, gris ; `hud-value` en gras coloré (magenta/amber). Chiffres du score zéro-paddés sur 6 (`001603`), façon tableau de scores.
+- **HUD (technique)** : `hud-label` en capitales espacées, gris ; `hud-value` en gras **blanc** (mono). Chiffres du score zéro-paddés sur 6 (`001603`), façon tableau de scores. Seul le multiplicateur de cadence (`x… CADENCE`) se colore — c'est un combo.
 - **Oracle (narratif)** : `oracle` en **bas-de-casse**, interligne aéré — la borne murmure. À l'opposé du HUD : minuscule, calme, sans capitales. Le contraste casse/tracking distingue *la machine qui compte* de *la borne qui parle*.
 - **Threshold** : `threshold`, capitales massives + `text-shadow` vert au moment du franchissement de seuil. Le seul moment typographiquement « fort ».
 
@@ -87,20 +93,21 @@ Coins doux partout, jamais de cercle parfait pour une surface, jamais de pilule.
 
 ## Components
 
-- **HUD** — bandeau haut, trois colonnes : STAGE (magenta), SCORE (amber, 6 chiffres), HIGH + COMBO (green quand actif). Labels `hud-label`, valeurs `hud-value`.
+- **HUD** — bandeau haut, trois colonnes : STAGE (**blanc**), SCORE (**blanc**, 6 chiffres), HIGH (blanc) + `x… CADENCE` (green quand actif — seul élément coloré du HUD, c'est un combo). Labels `hud-label` gris, valeurs `hud-value` blanches.
 - **Jauge FLUX** — barre fine, remplissage dégradé cyan→green, halo green + `%` qui passe au green au-delà de 80 %. Transition largeur ≤ 90ms (réactive au tap).
 - **Écran CRT** — surface `void` arrondie 16px, `inset shadow`, calques scanlines (multiply) + vignette radiale par-dessus le moteur. Cible de tap plein cadre.
-- **Sélecteur de stage** — trois boutons égaux : numéro (ou 🔒 verrouillé / ⚠ moteur indisponible) + nom. Actif = bordure + fond teinté de la couleur du stage. Désactivé = grisé, `not-allowed`.
-- **Seuil (flash)** — plein écran, voile green translucide, mot `threshold` centré + nom du stage. ~0,95s, `pointer-events:none`.
-- **Éveil (boot)** — plein écran `void`, lignes `oracle` cyan qui apparaissent une à une, CTA green clignotante en bas. Tap n'importe où = entrée.
+- **Sélecteur de stage** — trois boutons égaux : numéro (ou 🔒 verrouillé / ⚠ moteur indisponible) + nom. Actif = bordure + fond **blancs** (monochrome, aucune teinte de stage). Désactivé = grisé, `not-allowed`.
+- **Seuil (flash)** — plein écran, voile green translucide, mot `threshold` centré + nom du stage (**événement** → couleur). ~0,95s, `pointer-events:none`.
+- **Éveil (boot)** — plein écran `void`, lignes `oracle` **blanches/grises** qui apparaissent une à une, CTA blanche clignotante. La borne dort : la couleur n'est pas encore là. Tap n'importe où = entrée.
+- **Couche FX** — au-dessus des moteurs, sous les scanlines : anneau résonnable (blanc au repos, coloré par la cadence), flash d'impact, embrasement. C'est là que la couleur *saigne* dans le monochrome.
 
 ## Do's and Don'ts
 
 | Do | Don't |
 |---|---|
-| Couleur = signal (état/énergie/franchissement) | Couleur « décorative » ou pastel |
-| Psychédélisme dans les moteurs de rendu | Psychédélisme dans l'habillage/HUD |
+| Noir & blanc par défaut ; la couleur *saigne* sur combo/événement | Couleur persistante, décorative ou pastel |
+| Cadence = teinte (×2 magenta → ×3 cyan → ×4 vert) | Colorer un élément qui ne signale ni combo ni événement |
+| Moteurs, HUD, jauge, boot, sélecteur en niveaux de gris | Habillage/HUD teinté en permanence |
 | Portrait téléphone, une main, pouce | Layouts desktop/paysage, hover, curseurs |
 | Monospace : HUD en CAPS / oracle en bas-de-casse | Mélanger les deux registres de voix |
-| Noir profond fixe, unique identité | Mode clair, thèmes alternatifs |
-| Échec dit dans la voix de la borne | Pastille/fond rouge d'erreur |
+| Rouge = détection/menace/boss uniquement | Rouge décoratif ou d'erreur-formulaire |

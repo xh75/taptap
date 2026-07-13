@@ -11,7 +11,7 @@
 
 Un `<canvas>` au-dessus des moteurs, **sous** les scanlines (intégration CRT), piloté par sa propre boucle rAF lisant des **refs** (0 re-render React). Elle dessine, identiquement sur les 3 stages :
 
-- **Anneau résonnable** — ellipse en espace normalisé étiré : le tracé **coïncide exactement** avec ce que teste la mécanique de RÉSONANCE. *Ce que tu vois est ce que tu peux toucher* (corrige la dette de cohérence MANDALA/LIQUID). Couleur `ringColor(mult)` : magenta (présence) → vert acide (maîtrise) selon la cadence ; opacité, épaisseur et glow montent avec le multiplicateur.
+- **Anneau résonnable** — ellipse en espace normalisé étiré : le tracé **coïncide exactement** avec ce que teste la mécanique de RÉSONANCE. *Ce que tu vois est ce que tu peux toucher* (corrige la dette de cohérence MANDALA/LIQUID). Couleur `ringColor(mult)` : **blanc au repos (×1) → magenta (×2) → cyan (×3) → vert (×4)** — la teinte encode ton palier de flux ; opacité, épaisseur et glow montent avec le multiplicateur.
 - **Flash d'impact** — noyau lumineux blanc→teinte au point touché, à chaque tap valide ; intensité = cadence.
 - **Embrasement** — RÉSONANCE : l'anneau touché s'embrase (magenta→blanc) ; INTERFÉRENCE : flash blanc sur les deux anneaux.
 - **Bloom d'ambiance** — au-delà de ×3, un voile additif très doux (l'« embrasement » élégant).
@@ -30,7 +30,7 @@ Garde-fou : les âges négatifs (décalage d'horloge rAF vs `performance.now()`)
 
 ## Palette
 
-Signal étendu : `rouge` = menace/détection (bruit, combat) · `vert` = franchissement/gain/maîtrise · `magenta` = présence (toi, l'onde de tap) · `cyan` = énergie/tempo · `ambre` = score. Aucune couleur décorative.
+**Base noir & blanc ; la couleur ne surgit que sur combo/événement.** Cadence : ×2 `magenta` → ×3 `cyan` → ×4 `vert` (la teinte = ton palier de flux). `vert` aussi = SEUIL/gains. `rouge` = détection/menace/boss. Tout le reste (moteurs, HUD, jauge, score, boot) est monochrome. Aucune couleur décorative ni persistante.
 
 ## À surveiller (playtest / itération)
 

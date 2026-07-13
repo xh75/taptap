@@ -56,7 +56,7 @@ VEILLE → INTRUSION → [COUCHE n : jeu ~30 s] → PORTE DU BOSS → [BOSS]
 
 | Écran | Rôle | Copie (voix de l'hôte — fait foi) |
 |---|---|---|
-| **VEILLE** (titre / attract) | La borne dort. Glyphes des couches débloquées (onde ⌇ · couronne ✳ · globe ●), high score ambre. | boot actuel + `trois couches. un cœur. il dort encore.` |
+| **VEILLE** (titre / attract) | La borne dort. Glyphes des couches débloquées (onde ⌇ · couronne ✳ · globe ●), high score **blanc** (base mono). | boot actuel + `trois couches. un cœur. il dort encore.` |
 | **INTRUSION** (début de run, ~1,5 s) | La borne te remarque. Premier usage du rouge. | `…une impureté dans le signal.` |
 | **CARTE DE COUCHE** (~2 s) | Carte de donjon : nom + profondeur. | `COUCHE 1 — LE SIGNAL` · `ici, tout n'est qu'onde.` / `COUCHE 2 — LA LOGIQUE` · `ici, tout est rangé.` / `COUCHE 3 — LE CŒUR` · `ici, ça calcule.` |
 | **PORTE DU BOSS** (FLUX 100 %) | Le décor se fige et se **résout** en entité ; carton du nom ; un tap pour engager. | `LA PORTEUSE` — `je vais te couvrir de bruit.` / `LE ROUAGE` — `intrus catalogué. tu seras rangé.` / `LE NOYAU` — `tu n'es qu'une erreur d'arrondi.` |

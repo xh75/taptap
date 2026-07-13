@@ -35,7 +35,7 @@ Microcopie canonique (le code suit ce tableau — il fait foi) :
 | Franchissement de seuil | `SEUIL` | `threshold`, {colors.green} |
 | Seuil → MANDALA | sous-titre : `les couronnes répondent` | `oracle`, blanc |
 | Seuil → LIQUID | sous-titre : `le flux profond s'ouvre` | `oracle`, blanc |
-| Repli WebGL | `le flux profond ne répond pas — retour aux couronnes` | `oracle`, {colors.ink-60} (l'ambre reste réservé au score) |
+| Repli WebGL | `le flux profond ne répond pas — retour aux couronnes` | `oracle`, {colors.ink-60} (gris — la couleur est réservée aux combos/événements) |
 | Contemplation (tout ouvert) | `plus rien à franchir. reste, ou recommence.` | `oracle`, {colors.ink-60} |
 | Labels HUD | `STAGE` · `SCORE` · `HIGH` · `FLUX` · `x… COMBO` | `hud-label`, technique |
 
@@ -55,7 +55,7 @@ Note de registre : le **HUD reste technique** (capitales, chiffres zéro-paddés
 2. **Vive (progression)** — état nominal. Taps → FLUX ↑, combos, score. Repos → FLUX ↓ (~9 %/s). Pression douce mais réelle : rester actif ou la jauge fond.
 3. **Seuil** — FLUX atteint 100 % et une couche supérieure existe : flash `SEUIL`, déblocage, bascule automatique, résidu de FLUX (~14 %) sur la nouvelle couche.
 4. **Contemplation (liberté)** — quand les **trois** stages sont ouverts. La tension se relâche : au dernier stage, la décroissance du FLUX **s'adoucit** (on peut s'arrêter et regarder sans tout perdre) et la borne murmure une fois `plus rien à franchir. reste, ou recommence.` Le score reste possible (chasse au high-score) mais n'est plus imposé. C'est le versant « bac à sable » de la tension.
-5. **Repli (WebGL absent)** — si le contexte GL manque : bascule douce sur `les couronnes`, ligne oracle amber, stage `le flux profond` marqué ⚠ dans le sélecteur. Jamais d'écran d'erreur brut.
+5. **Repli (WebGL absent)** — si le contexte GL manque : bascule douce sur `les couronnes`, ligne oracle grise, stage `le flux profond` marqué ⚠ dans le sélecteur. Jamais d'écran d'erreur brut.
 6. **Motion réduite** — si `prefers-reduced-motion` : vitesse des moteurs × 0,3, scanlines coupées. La borne reste jouable et lisible, jamais figée.
 
 ## Interaction Primitives
@@ -81,7 +81,7 @@ Nadia, 24 ans, dans le métro, une main sur la barre, l'autre sur son téléphon
 
 1. **L'écran est noir.** Des mots montent, un à un, en cyan pâle : *quelque chose dort sous le verre.* En bas, ça clignote : `POSE UN DOIGT POUR L'ÉVEILLER`. Elle comprend sans qu'on lui explique.
 2. **Elle tape.** Sous son pouce, une onde magenta jaillit *exactement là*. La borne s'éveille : des sinusoïdes ondulent. En haut, `FLUX` bouge d'un cran.
-3. **Elle retape, plus vite.** `x3 COMBO` s'allume en vert, le FLUX grimpe par à-coups, le score défile en amber. Ça devient un rythme — le pouce trouve sa cadence.
+3. **Elle retape, plus vite.** `x3 CADENCE` s'allume, et — surprise — la couleur *saigne* dans l'écran gris : les anneaux virent au cyan à mesure qu'elle tient le rythme. Le score défile en blanc, le FLUX grimpe. Ça devient un rythme — le pouce trouve sa cadence, et le monde se colore avec elle.
 4. **Le FLUX touche le rebord.** *(climax)* Plein écran, un mot énorme, vert, vibrant : **SEUIL**. Dessous, un murmure : *les couronnes répondent.* L'écran bascule : les ondes cèdent la place à un **mandala** radial qui s'ouvre à chaque tap. Nadia n'a rien lu, rien appris — elle a **franchi** quelque chose.
 5. **Elle continue jusqu'au flux profond.** Deux seuils plus loin, les trois couches sont ouvertes. La pression retombe : la borne souffle *plus rien à franchir. reste, ou recommence.* Nadia arrête de marteler. Elle regarde le flux marbré onduler sous son pouce, pose un tap de temps en temps pour l'onde de choc. Sa station arrive. Elle enverra le lien à quelqu'un.
 

@@ -19,20 +19,13 @@ import {
  * ==========================================================================*/
 
 const PALETTE = {
-  void: '#0a0118',
+  void: '#0a0a0c', // noir neutre (base mono)
   magenta: '#ff2e97',
   cyan: '#00f0ff',
   amber: '#ffd600',
   green: '#39ff14',
   red: '#ff3b30', // menace / detection UNIQUEMENT (cf. CLAUDE.md regle 1)
 } as const
-
-// Meme palette en composantes 0..1 pour le shader WebGL et les sprites Canvas.
-const RGB = {
-  magenta: [1.0, 0.18, 0.592] as [number, number, number],
-  cyan: [0.0, 0.941, 1.0] as [number, number, number],
-  green: [0.224, 1.0, 0.078] as [number, number, number],
-}
 
 type Engine = 'svg' | 'canvas' | 'webgl'
 
@@ -174,12 +167,13 @@ const WaveformStage = memo(
       return () => cancelAnimationFrame(raf)
     }, [speed])
 
+    // Ondes en niveaux de gris (base mono) ; distinctes par la clarte, pas la teinte.
     const lines = [
-      { freq: 0.012, amp: 90, color: PALETTE.magenta, off: 0 },
-      { freq: 0.018, amp: 60, color: PALETTE.cyan, off: 1.1 },
-      { freq: 0.009, amp: 130, color: PALETTE.magenta, off: 2.3 },
-      { freq: 0.024, amp: 45, color: PALETTE.cyan, off: 0.6 },
-      { freq: 0.015, amp: 100, color: PALETTE.green, off: 3.0 },
+      { freq: 0.012, amp: 90, color: '#ffffff', off: 0 },
+      { freq: 0.018, amp: 60, color: '#9aa0a6', off: 1.1 },
+      { freq: 0.009, amp: 130, color: '#d7dade', off: 2.3 },
+      { freq: 0.024, amp: 45, color: '#7d8288', off: 0.6 },
+      { freq: 0.015, amp: 100, color: '#c2c6cb', off: 3.0 },
     ]
 
     const now = performance.now()
@@ -247,7 +241,12 @@ interface Pulse {
   colorIdx: number
 }
 
-const MANDALA_COLORS: [number, number, number][] = [RGB.magenta, RGB.cyan, RGB.green]
+// Couronnes en niveaux de gris (base mono). La couleur vient de la couche FX.
+const MANDALA_COLORS: [number, number, number][] = [
+  [0.92, 0.92, 0.92],
+  [0.6, 0.63, 0.66],
+  [1, 1, 1],
+]
 
 const MandalaStage = memo(
   forwardRef<StageHandle, StageProps>(function MandalaStage({ speed }, ref) {
@@ -319,7 +318,7 @@ const MandalaStage = memo(
         const t = (now / 1000) * speed
         // Trainee : voile sombre semi-transparent par-dessus la frame precedente.
         ctx.globalCompositeOperation = 'source-over'
-        ctx.fillStyle = 'rgba(10,1,24,0.16)'
+        ctx.fillStyle = 'rgba(10,10,12,0.16)'
         ctx.fillRect(0, 0, w, h)
 
         ctx.globalCompositeOperation = 'lighter'
@@ -526,9 +525,10 @@ const LiquidStage = memo(
       const uTime = gl.getUniformLocation(prog, 'u_time')
       const uTaps = gl.getUniformLocation(prog, 'u_taps')
       const uAges = gl.getUniformLocation(prog, 'u_ages')
-      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colA'), RGB.magenta)
-      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colB'), RGB.cyan)
-      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colC'), RGB.green)
+      // Flux marbre en niveaux de gris (base mono) : sombre → clair → blanc.
+      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colA'), [0.13, 0.13, 0.15])
+      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colB'), [0.55, 0.56, 0.6])
+      gl.uniform3fv(gl.getUniformLocation(prog, 'u_colC'), [1, 1, 1])
 
       let w = 0
       let h = 0
@@ -608,12 +608,23 @@ interface Ignite {
 
 type Ref<T> = { current: T }
 
-// Magenta (presence) → vert acide quand la cadence monte (palette-signal : maitrise du flux).
+// Noir & blanc au repos ; la couleur ne surgit qu'avec la CADENCE (le palier = la teinte).
+// x1 blanc → x2 magenta → x3 cyan → x4 vert. La couleur EST ta maitrise du flux.
+const FLOW_STOPS: [number, number, number][] = [
+  [235, 235, 235], // x1 : blanc (mono)
+  [255, 46, 151], // x2 : magenta
+  [0, 240, 255], // x3 : cyan
+  [57, 255, 20], // x4 : vert
+]
 function ringColor(mult: number, a: number): string {
-  const t = Math.min(1, (mult - 1) / 3) // 0 a x1, 1 a x4
-  const r = Math.round(255 - 40 * t)
-  const g = Math.round(46 + 209 * t)
-  const b = Math.round(151 - 131 * t)
+  const t = Math.min(1, Math.max(0, (mult - 1) / 3)) * (FLOW_STOPS.length - 1)
+  const i = Math.min(FLOW_STOPS.length - 2, Math.floor(t))
+  const f = t - i
+  const c0 = FLOW_STOPS[i]
+  const c1 = FLOW_STOPS[i + 1]
+  const r = Math.round(c0[0] + (c1[0] - c0[0]) * f)
+  const g = Math.round(c0[1] + (c1[1] - c0[1]) * f)
+  const b = Math.round(c0[2] + (c1[2] - c0[2]) * f)
   return `rgba(${r},${g},${b},${a})`
 }
 
@@ -657,9 +668,10 @@ const FxCanvas = memo(function FxCanvas({
       const mult = multRef.current
       ctx.globalCompositeOperation = 'lighter'
 
-      // Bloom d'ambiance quand la cadence est haute (voile additif tres doux).
-      if (mult >= 3 && !reduced) {
-        ctx.fillStyle = ringColor(mult, ((mult - 2) / 2) * 0.05)
+      // La couleur bleed-in : voile additif teinte par la cadence (des ×2), tres doux.
+      // C'est ainsi que le monde monochrome se colore quand tu entres en flux.
+      if (mult >= 2 && !reduced) {
+        ctx.fillStyle = ringColor(mult, ((mult - 1) / 3) * 0.06)
         ctx.fillRect(0, 0, w, h)
       }
 
@@ -780,11 +792,11 @@ const Hud = memo(function Hud({
     >
       <div style={cell}>
         <span style={label}>STAGE</span>
-        <span style={{ color: PALETTE.magenta, fontSize: 15, fontWeight: 700 }}>{stageName}</span>
+        <span style={{ color: '#ffffff', fontSize: 15, fontWeight: 700 }}>{stageName}</span>
       </div>
       <div style={{ ...cell, alignItems: 'center' }}>
         <span style={label}>SCORE</span>
-        <span style={{ color: PALETTE.amber, fontSize: 18, fontWeight: 700 }}>
+        <span style={{ color: '#ffffff', fontSize: 18, fontWeight: 700 }}>
           {Math.min(score, 999999).toString().padStart(6, '0')}
         </span>
       </div>
@@ -858,7 +870,10 @@ function FlowGauge({
             style={{
               height: '100%',
               width: `${pct}%`,
-              background: `linear-gradient(90deg, ${PALETTE.cyan}, ${PALETTE.green})`,
+              // Mono par defaut ; vert seulement quand le SEUIL est imminent (evenement).
+              background: hot
+                ? `linear-gradient(90deg, rgba(57,255,20,0.65), ${PALETTE.green})`
+                : 'linear-gradient(90deg, rgba(255,255,255,0.35), rgba(255,255,255,0.9))',
               boxShadow: hot ? `0 0 14px ${PALETTE.green}` : 'none',
               transition: 'width 90ms linear',
             }}
@@ -918,9 +933,10 @@ const StageSelector = memo(function StageSelector({
               minHeight: 44,
               cursor: disabled ? 'not-allowed' : 'pointer',
               borderRadius: 8,
-              border: `1px solid ${active ? s.tint : 'rgba(255,255,255,0.15)'}`,
-              background: active ? `${s.tint}22` : 'rgba(255,255,255,0.03)',
-              color: disabled ? 'rgba(255,255,255,0.3)' : active ? s.tint : 'rgba(255,255,255,0.75)',
+              // Selecteur monochrome : actif = blanc (aucune teinte de stage).
+              border: `1px solid ${active ? '#ffffff' : 'rgba(255,255,255,0.15)'}`,
+              background: active ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
+              color: disabled ? 'rgba(255,255,255,0.3)' : active ? '#ffffff' : 'rgba(255,255,255,0.75)',
               fontFamily: 'ui-monospace, monospace',
               fontSize: 11,
               letterSpacing: '0.08em',
@@ -1032,9 +1048,10 @@ function BootOverlay({ reduced }: { reduced: boolean }) {
             style={{
               fontSize: isCta ? 'clamp(12px, 3.4vw, 17px)' : 'clamp(11px, 3vw, 15px)',
               letterSpacing: isCta ? '0.12em' : '0.02em',
-              color: isCta ? PALETTE.green : PALETTE.cyan,
+              // Eveil monochrome : la borne dort, la couleur n'est pas encore la.
+              color: isCta ? '#ffffff' : 'rgba(255,255,255,0.72)',
               opacity: isCta ? 1 : 0.72,
-              textShadow: isCta ? `0 0 12px ${PALETTE.green}` : 'none',
+              textShadow: isCta ? '0 0 12px rgba(255,255,255,0.55)' : 'none',
               animation: reduced ? 'none' : isCta ? 'tt-blink 1.1s steps(2) infinite' : 'tt-rise 0.5s ease-out',
               marginTop: isCta ? 12 : 0,
             }}
@@ -1408,7 +1425,7 @@ export default function TapTap() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#05010d',
+        background: '#050506',
         padding:
           'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
         boxSizing: 'border-box',
@@ -1435,8 +1452,8 @@ export default function TapTap() {
           flexDirection: 'column',
           borderRadius: 20,
           border: '1px solid rgba(255,255,255,0.08)',
-          background: 'linear-gradient(180deg, #120826, #05010d)',
-          boxShadow: '0 0 60px rgba(255,46,151,0.12)',
+          background: 'linear-gradient(180deg, #141416, #050506)',
+          boxShadow: '0 0 60px rgba(255,255,255,0.05)',
           overflow: 'hidden',
         }}
       >
@@ -1604,11 +1621,11 @@ const KEYFRAMES = `
   100% { box-shadow: 0 0 0 rgba(0,240,255,0); }
 }
 .tt-screen:focus-visible {
-  outline: 2px solid ${PALETTE.green};
+  outline: 2px solid #ffffff;
   outline-offset: 2px;
 }
 .tt-btn:focus-visible {
-  outline: 2px solid ${PALETTE.green};
+  outline: 2px solid #ffffff;
   outline-offset: 2px;
 }
 .tt-scanlines {

@@ -15,15 +15,16 @@ Arc : **défense-signal → défense-logique → défense-cœur**. Battre LE NOY
 
 La couleur reste un **signal d'état**, jamais décoratif. Le combat ajoute un cinquième signal :
 
-| Couleur | Signal |
-|---|---|
-| `#39ff14` vert | franchissement / gain / mise à mort |
-| **`#ff3b30` rouge** | **menace / dégâts / attaque qui touche** *(nouveau)* |
-| `#ff2e97` magenta | présence (toi, le stage courant, l'onde de tap) |
-| `#00f0ff` cyan | énergie / mouvement |
-| `#ffd600` ambre | score (et lui seul) |
+**Base noir & blanc** ; la couleur ne surgit que sur combo/événement (cf. DESIGN.md).
 
-→ À reporter dans `DESIGN.md` (section Colors + Do's/Don'ts) à l'implémentation.
+| Couleur | Signal (déclenché) |
+|---|---|
+| blanc / gris | tout le persistant (moteurs, HUD, jauge, score) |
+| `#ff2e97` magenta · `#00f0ff` cyan · `#39ff14` vert | **cadence** ×2 / ×3 / ×4 · résonance |
+| `#39ff14` vert | franchissement / gain / mise à mort |
+| **`#ff3b30` rouge** | **menace / dégâts / attaque de boss / détection** |
+
+Le boss, événement majeur, est un des rares moments où la couleur (rouge) domine l'écran.
 
 ## Modèle de combat (réel, avec échec)
 

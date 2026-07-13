@@ -26,7 +26,7 @@ Porteur : **Xavier**. Dépôt : `xh75/taptap` (public). Parler et documenter **e
 
 ## Règles non négociables
 
-1. **La couleur est un signal, jamais décorative** : magenta = présence · cyan = énergie · ambre = score (et lui seul) · vert = franchissement/gain · **rouge = menace/dégâts** (réservé au combat/détection).
+1. **Noir & blanc par défaut ; la couleur ne surgit que sur les COMBOS et les ÉVÉNEMENTS.** Tout le persistant (moteurs, HUD, jauge, boot, sélecteur) est monochrome. La couleur = récompense/signal, rare : **cadence** (×2 magenta → ×3 cyan → ×4 vert — la teinte = ton palier de flux), **résonance/interférence**, **SEUIL/niveau terminé** (vert), **détection/bruit** et **boss/danger** (rouge), **score au repos** = blanc. Jamais de couleur décorative.
 2. **Voix oracle** : la borne parle en bas-de-casse, énigmatique, hostile depuis « L'Intrus » (elle te prend pour une infection). Le HUD reste technique (CAPS). Jamais mélangés sur une même ligne. La microcopie des specs fait foi.
 3. **Téléphone d'abord, jamais de scroll**, cibles ≥ 44 px, `prefers-reduced-motion` respecté partout (condition d'accès), la couleur jamais seule porteuse de sens.
 4. **Perf** : dPR plafonné à 2, ResizeObserver, uniforms WebGL en refs, pas de re-render React à 60 fps (moteurs `memo`, taps via refs), pas de `shadowBlur` par-op (sprites pré-rendus).
