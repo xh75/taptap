@@ -138,15 +138,6 @@ interface FloatLabel {
   kind: 'gain' | 'noise'
 }
 
-// Embrasement d'un anneau resonne / flash d'interference (couche overlay,
-// les moteurs de rendu ne sont pas touches — cf. spec « Never »).
-interface Burst {
-  id: number
-  x: number
-  y: number
-  rad: number // rayon normalise de l'anneau au moment du hit
-  kind: 'res' | 'inter'
-}
 
 interface StageProps {
   speed: number // 1 normal, 0.3 si reduced-motion
@@ -156,23 +147,17 @@ interface StageProps {
  * STAGE 1 — WAVEFORM (SVG)
  * Lignes sinusoidales dephasees + ondes de tap. Rendu via state React.
  * ========================================================================*/
-interface Ripple {
-  id: number
-  x: number
-  y: number
-  born: number
-}
-
 const WaveformStage = memo(
   forwardRef<StageHandle, StageProps>(function WaveformStage({ speed }, ref) {
     const [phase, setPhase] = useState(0)
-    const [ripples, setRipples] = useState<Ripple[]>([])
-    const idRef = useRef(0)
+    // Kick : le tap fait gonfler l'onde a l'endroit touche (identite native du stage 1).
+    // L'anneau resonnable, lui, est dessine par la couche FX commune aux 3 stages.
+    const kicksRef = useRef<{ x: number; born: number }[]>([])
 
     useImperativeHandle(ref, () => ({
-      tap: (nx, ny) => {
-        const r: Ripple = { id: idRef.current++, x: nx * 1000, y: ny * 1000, born: performance.now() }
-        setRipples((rs) => [...rs.slice(-11), r])
+      tap: (nx) => {
+        kicksRef.current.push({ x: nx * 1000, born: performance.now() })
+        if (kicksRef.current.length > 8) kicksRef.current.shift()
       },
     }))
 
@@ -183,7 +168,6 @@ const WaveformStage = memo(
         const dt = (now - last) / 1000
         last = now
         setPhase((p) => p + dt * speed * 1.6)
-        setRipples((rs) => rs.filter((r) => now - r.born < 1200))
         raf = requestAnimationFrame(loop)
       }
       raf = requestAnimationFrame(loop)
@@ -198,19 +182,31 @@ const WaveformStage = memo(
       { freq: 0.015, amp: 100, color: PALETTE.green, off: 3.0 },
     ]
 
+    const now = performance.now()
+    // Gonflement local et decroissant autour de chaque tap recent.
+    const kickAt = (x: number) => {
+      let b = 0
+      for (const k of kicksRef.current) {
+        const age = now - k.born
+        if (age > 500) continue
+        const dx = x - k.x
+        b += 150 * (1 - age / 500) * Math.exp(-(dx * dx) / (2 * 70 * 70))
+      }
+      return b
+    }
+
     const buildPath = (freq: number, amp: number, off: number) => {
       let d = ''
       for (let x = 0; x <= 1000; x += 20) {
+        const a = amp + kickAt(x)
         const y =
           500 +
-          amp * Math.sin(x * freq + phase + off) +
-          amp * 0.35 * Math.sin(x * freq * 2.3 - phase * 1.4 + off)
+          a * Math.sin(x * freq + phase + off) +
+          a * 0.35 * Math.sin(x * freq * 2.3 - phase * 1.4 + off)
         d += (x === 0 ? 'M' : 'L') + x.toFixed(0) + ' ' + y.toFixed(1) + ' '
       }
       return d
     }
-
-    const now = performance.now()
 
     return (
       <svg
@@ -233,23 +229,6 @@ const WaveformStage = memo(
               opacity={0.85}
             />
           ))}
-          {ripples.map((r) => {
-            const age = (now - r.born) / 1200
-            const rad = age * 380
-            // Onde de tap = magenta (la presence, cf. DESIGN/EXPERIENCE Key Flow).
-            return (
-              <circle
-                key={r.id}
-                cx={r.x}
-                cy={r.y}
-                r={rad}
-                fill="none"
-                stroke={PALETTE.magenta}
-                strokeWidth={3 * (1 - age)}
-                opacity={1 - age}
-              />
-            )
-          })}
         </g>
       </svg>
     )
@@ -608,6 +587,168 @@ const LiquidStage = memo(
 )
 
 /* ==========================================================================
+ * COUCHE FX — au-dessus des moteurs, sous les scanlines. rAF + refs (0 re-render).
+ * « L'intensite = ton flux » : anneaux resonnables (identiques sur les 3 stages),
+ * flash d'impact, embrasement resonance/interference. Sobre : bloom/luminosite
+ * pilotes par la CADENCE, jamais de shake ni d'aberration.
+ * ========================================================================*/
+interface Impact {
+  x: number
+  y: number
+  born: number
+  mult: number
+}
+interface Ignite {
+  x: number
+  y: number
+  rad: number
+  born: number
+  kind: 'res' | 'inter'
+}
+
+type Ref<T> = { current: T }
+
+// Magenta (presence) → vert acide quand la cadence monte (palette-signal : maitrise du flux).
+function ringColor(mult: number, a: number): string {
+  const t = Math.min(1, (mult - 1) / 3) // 0 a x1, 1 a x4
+  const r = Math.round(255 - 40 * t)
+  const g = Math.round(46 + 209 * t)
+  const b = Math.round(151 - 131 * t)
+  return `rgba(${r},${g},${b},${a})`
+}
+
+const FxCanvas = memo(function FxCanvas({
+  ringsRef,
+  impactsRef,
+  ignitesRef,
+  multRef,
+  reducedRef,
+}: {
+  ringsRef: Ref<{ x: number; y: number; born: number }[]>
+  impactsRef: Ref<Impact[]>
+  ignitesRef: Ref<Ignite[]>
+  multRef: Ref<number>
+  reducedRef: Ref<boolean>
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    let w = 0
+    let h = 0
+    let ratio = 1
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      const rect = canvas.getBoundingClientRect()
+      ratio = dpr()
+      w = Math.max(1, Math.floor(rect.width * ratio))
+      h = Math.max(1, Math.floor(rect.height * ratio))
+      canvas.width = w
+      canvas.height = h
+    })
+    ro.observe(canvas)
+
+    const loop = (now: number) => {
+      ctx.clearRect(0, 0, w, h)
+      const s = Math.min(w, h)
+      const reduced = reducedRef.current
+      const mult = multRef.current
+      ctx.globalCompositeOperation = 'lighter'
+
+      // Bloom d'ambiance quand la cadence est haute (voile additif tres doux).
+      if (mult >= 3 && !reduced) {
+        ctx.fillStyle = ringColor(mult, ((mult - 2) / 2) * 0.05)
+        ctx.fillRect(0, 0, w, h)
+      }
+
+      // Anneaux resonnables — ellipse en espace etire = ce que la mecanique teste.
+      const rings = ringsRef.current
+      for (const r of rings) {
+        const age = now - r.born
+        if (age < 0 || age > RING_LIFE) continue // age<0 : decalage d'horloge rAF
+        const p = age / RING_LIFE
+        const rad = RING_RMAX * p
+        const a = (1 - p) * (0.3 + 0.14 * Math.min(mult, 4))
+        ctx.strokeStyle = ringColor(mult, a)
+        ctx.lineWidth = (1.1 + 0.5 * Math.min(mult, 4)) * ratio
+        ctx.shadowBlur = reduced ? 0 : (7 + 3 * mult) * ratio
+        ctx.shadowColor = ringColor(mult, 0.8)
+        ctx.beginPath()
+        ctx.ellipse(r.x * w, r.y * h, rad * w, rad * h, 0, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      ctx.shadowBlur = 0
+
+      // Flash d'impact au point touche.
+      const impacts = impactsRef.current
+      for (let i = impacts.length - 1; i >= 0; i--) {
+        const im = impacts[i]
+        const age = now - im.born
+        if (age > 260) {
+          impacts.splice(i, 1)
+          continue
+        }
+        if (age < 0) continue
+        const p = age / 260
+        const rad = s * (0.012 + 0.055 * p)
+        const a = (1 - p) * 0.9
+        const cx = im.x * w
+        const cy = im.y * h
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad)
+        grd.addColorStop(0, `rgba(255,255,255,${a})`)
+        grd.addColorStop(0.5, ringColor(im.mult, a * 0.6))
+        grd.addColorStop(1, 'rgba(255,255,255,0)')
+        ctx.fillStyle = grd
+        ctx.beginPath()
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // Embrasement resonance (magenta→blanc) / interference (blanc).
+      const ignites = ignitesRef.current
+      for (let i = ignites.length - 1; i >= 0; i--) {
+        const ig = ignites[i]
+        const age = now - ig.born
+        if (age > 450) {
+          ignites.splice(i, 1)
+          continue
+        }
+        if (age < 0) continue
+        const p = age / 450
+        const a = (1 - p) * 0.95
+        const col = ig.kind === 'inter' ? `rgba(255,255,255,${a})` : ringColor(3.4, a)
+        ctx.strokeStyle = col
+        ctx.lineWidth = (2 + 2 * (1 - p)) * ratio
+        ctx.shadowBlur = reduced ? 0 : 16 * ratio
+        ctx.shadowColor = col
+        const rad = ig.rad * (1 + 0.08 * p)
+        ctx.beginPath()
+        ctx.ellipse(ig.x * w, ig.y * h, rad * w, rad * h, 0, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+      }
+
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [ringsRef, impactsRef, ignitesRef, multRef, reducedRef])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-hidden="true"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9 }}
+    />
+  )
+})
+
+/* ==========================================================================
  * HUD, jauge, selecteur, eveil, flash
  * ========================================================================*/
 const Hud = memo(function Hud({
@@ -666,11 +807,13 @@ function FlowGauge({
   flow,
   frozen,
   freezeSeq,
+  beat,
   reduced,
 }: {
   flow: number
   frozen: boolean
   freezeSeq: number
+  beat: number
   reduced: boolean
 }) {
   const pct = Math.min(100, (flow / FLUX_MAX) * 100)
@@ -693,32 +836,48 @@ function FlowGauge({
           {rounded}%{hot ? ' ▲' : ''}
         </span>
       </div>
-      <div
-        key={freezeSeq} // remonte a chaque detection : l'animation tt-noise rejoue
-        role="progressbar"
-        aria-label="FLUX"
-        aria-valuenow={rounded}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        style={{
-          height: 12,
-          borderRadius: 6,
-          background: 'rgba(255,255,255,0.08)',
-          // Detection du bruit : liseré rouge (menace), clignotant sauf reduced-motion.
-          border: frozen ? `1px solid ${PALETTE.red}` : '1px solid rgba(255,255,255,0.12)',
-          animation: frozen && !reduced ? 'tt-noise 0.5s linear 2' : 'none',
-          overflow: 'hidden',
-        }}
-      >
+      <div style={{ position: 'relative' }}>
         <div
+          key={freezeSeq} // remonte a chaque detection : l'animation tt-noise rejoue
+          role="progressbar"
+          aria-label="FLUX"
+          aria-valuenow={rounded}
+          aria-valuemin={0}
+          aria-valuemax={100}
           style={{
-            height: '100%',
-            width: `${pct}%`,
-            background: `linear-gradient(90deg, ${PALETTE.cyan}, ${PALETTE.green})`,
-            boxShadow: hot ? `0 0 14px ${PALETTE.green}` : 'none',
-            transition: 'width 90ms linear',
+            height: 12,
+            borderRadius: 6,
+            background: 'rgba(255,255,255,0.08)',
+            // Detection du bruit : liseré rouge (menace), clignotant sauf reduced-motion.
+            border: frozen ? `1px solid ${PALETTE.red}` : '1px solid rgba(255,255,255,0.12)',
+            animation: frozen && !reduced ? 'tt-noise 0.5s linear 2' : 'none',
+            overflow: 'hidden',
           }}
-        />
+        >
+          <div
+            style={{
+              height: '100%',
+              width: `${pct}%`,
+              background: `linear-gradient(90deg, ${PALETTE.cyan}, ${PALETTE.green})`,
+              boxShadow: hot ? `0 0 14px ${PALETTE.green}` : 'none',
+              transition: 'width 90ms linear',
+            }}
+          />
+        </div>
+        {/* Respiration au tempo du joueur : glow pulse a chaque tap dans la cadence. */}
+        {!reduced && !frozen && (
+          <div
+            key={beat}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: 6,
+              pointerEvents: 'none',
+              animation: 'tt-beat 0.32s ease-out',
+            }}
+          />
+        )}
       </div>
     </div>
   )
@@ -904,8 +1063,8 @@ export default function TapTap() {
   const [mult, setMult] = useState(1)
   const [frozenUi, setFrozenUi] = useState(false)
   const [freezeSeq, setFreezeSeq] = useState(0) // re-declenche l'animation de detection
+  const [beat, setBeat] = useState(0) // pulsation de la jauge au tempo du joueur (indice de decouverte)
   const [labels, setLabels] = useState<FloatLabel[]>([])
-  const [bursts, setBursts] = useState<Burst[]>([])
   const [score, setScore] = useState(0)
   const [highScore, setHighScore] = useState(saved.highScore)
   const [flashSub, setFlashSub] = useState<string | null>(null)
@@ -923,6 +1082,8 @@ export default function TapTap() {
   const chainRef = useRef(0) // taps enchaines dans le tempo
   const multRef = useRef(1) // miroir du multiplicateur affiche
   const ringsRef = useRef<{ x: number; y: number; born: number }[]>([])
+  const impactsRef = useRef<Impact[]>([]) // flashs d'impact (couche FX)
+  const ignitesRef = useRef<Ignite[]>([]) // embrasements resonance/interference (couche FX)
   const tapTimesRef = useRef<number[]>([]) // fenetre glissante 1 s (detection du taux)
   const freezeUntilRef = useRef(0) // gel de la jauge apres BRUIT
   const freezeTimeoutRef = useRef(0) // timeout du degel UI (annule/rearme a chaque detection)
@@ -1053,15 +1214,6 @@ export default function TapTap() {
     [trackedTimeout],
   )
 
-  // Embrasement de l'anneau resonne (RESONANCE) / flash blanc (INTERFERENCE).
-  const pushBurst = useCallback(
-    (x: number, y: number, rad: number, kind: 'res' | 'inter') => {
-      const id = labelIdRef.current++
-      setBursts((bs) => [...bs.slice(-3), { id, x, y, rad, kind }])
-      trackedTimeout(() => setBursts((bs) => bs.filter((b) => b.id !== id)), 500)
-    },
-    [trackedTimeout],
-  )
 
   const registerTap = useCallback(
     (nx: number, ny: number) => {
@@ -1117,6 +1269,7 @@ export default function TapTap() {
           TEMPO_MAX,
           Math.max(TEMPO_MIN, 0.7 * tempoRef.current + 0.3 * gap),
         )
+        setBeat((b) => b + 1) // tap dans le tempo → la jauge respire (indice de decouverte)
       } else if (
         tempoRef.current === null &&
         hadPrev &&
@@ -1155,6 +1308,10 @@ export default function TapTap() {
       }
       const hits = hitRings.length
 
+      // Flash d'impact au point touche (couche FX, intensite = cadence).
+      impactsRef.current.push({ x: nx, y: ny, born: now, mult: m })
+      if (impactsRef.current.length > 24) impactsRef.current.shift()
+
       // --- Gains (le gel est deja sorti plus haut).
       let fluxGain = GAIN_BASE * m
       let pts = PTS_BASE * m
@@ -1162,16 +1319,17 @@ export default function TapTap() {
         fluxGain += GAIN_INTERFERENCE
         pts += PTS_INTERFERENCE
         pushLabel(nx, ny, '+6 %', 'gain')
-        // Flash d'interference : les deux anneaux s'embrasent en blanc.
-        pushBurst(hitRings[0].x, hitRings[0].y, hitRings[0].rad, 'inter')
-        pushBurst(hitRings[1].x, hitRings[1].y, hitRings[1].rad, 'inter')
+        // Les deux anneaux s'embrasent en blanc (couche FX).
+        ignitesRef.current.push({ ...hitRings[0], born: now, kind: 'inter' })
+        ignitesRef.current.push({ ...hitRings[1], born: now, kind: 'inter' })
       } else if (hits === 1) {
         fluxGain += GAIN_RESONANCE
         pts += PTS_RESONANCE
         pushLabel(nx, ny, '+3 %', 'gain')
-        // L'anneau resonne s'embrase (magenta → blanc via le glow).
-        pushBurst(hitRings[0].x, hitRings[0].y, hitRings[0].rad, 'res')
+        // L'anneau resonne s'embrase (magenta → blanc, couche FX).
+        ignitesRef.current.push({ ...hitRings[0], born: now, kind: 'res' })
       }
+      if (ignitesRef.current.length > 8) ignitesRef.current.splice(0, ignitesRef.current.length - 8)
       const raw = flowRef.current + fluxGain
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
@@ -1187,7 +1345,7 @@ export default function TapTap() {
       rings.push({ x: nx, y: ny, born: now })
       if (rings.length > 12) rings.shift()
     },
-    [triggerStageUp, pushLabel, pushBurst],
+    [triggerStageUp, pushLabel],
   )
 
   // Le premier contact reveille la borne ET pulse au point touche.
@@ -1283,7 +1441,7 @@ export default function TapTap() {
         }}
       >
         <Hud stageName={stage.name} score={score} highScore={highScore} mult={mult} />
-        <FlowGauge flow={flow} frozen={frozenUi} freezeSeq={freezeSeq} reduced={reduced} />
+        <FlowGauge flow={flow} frozen={frozenUi} freezeSeq={freezeSeq} beat={beat} reduced={reduced} />
 
         {/* Ecran CRT bombe — surface de jeu unique (eveil + jeu) */}
         <div style={{ position: 'relative', flex: 1, margin: '0 14px', minHeight: 0 }}>
@@ -1316,31 +1474,18 @@ export default function TapTap() {
               <LiquidStage ref={engineRef} speed={speed} onGlError={handleGlError} />
             )}
 
+            {/* Couche FX : anneaux resonnables + impacts + embrasements (rAF, refs) */}
+            <FxCanvas
+              ringsRef={ringsRef}
+              impactsRef={impactsRef}
+              ignitesRef={ignitesRef}
+              multRef={multRef}
+              reducedRef={reducedRef}
+            />
+
             {/* Scanlines + vignette CRT */}
             <div className="tt-scanlines" aria-hidden="true" />
             <div className="tt-vignette" aria-hidden="true" />
-
-            {/* Embrasement des anneaux resonnes / flash d'interference (overlay) */}
-            {bursts.map((b) => (
-              <div
-                key={b.id}
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  left: `${(b.x - b.rad) * 100}%`,
-                  top: `${(b.y - b.rad) * 100}%`,
-                  width: `${b.rad * 2 * 100}%`,
-                  height: `${b.rad * 2 * 100}%`,
-                  borderRadius: '50%',
-                  border: `2px solid ${b.kind === 'inter' ? '#ffffff' : PALETTE.magenta}`,
-                  boxShadow: `0 0 18px ${b.kind === 'inter' ? '#ffffff' : PALETTE.magenta}`,
-                  opacity: 0.9,
-                  animation: reduced ? 'none' : 'tt-ignite 0.45s ease-out forwards',
-                  pointerEvents: 'none',
-                  zIndex: 12,
-                }}
-              />
-            ))}
 
             {/* Etiquettes ephemeres de la grammaire (+3 %, +6 %, bruit.) */}
             {labels.map((l) => (
@@ -1453,9 +1598,10 @@ const KEYFRAMES = `
   0%, 100% { box-shadow: 0 0 10px rgba(255,59,48,0.55); }
   50% { box-shadow: 0 0 0 rgba(255,59,48,0); }
 }
-@keyframes tt-ignite {
-  0% { opacity: 0.95; filter: brightness(2); }
-  100% { opacity: 0; filter: brightness(1); transform: scale(1.06); }
+@keyframes tt-beat {
+  0% { box-shadow: 0 0 0 rgba(0,240,255,0); }
+  30% { box-shadow: 0 0 9px rgba(0,240,255,0.5); }
+  100% { box-shadow: 0 0 0 rgba(0,240,255,0); }
 }
 .tt-screen:focus-visible {
   outline: 2px solid ${PALETTE.green};
