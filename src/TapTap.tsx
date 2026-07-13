@@ -24,6 +24,7 @@ const PALETTE = {
   cyan: '#00f0ff',
   amber: '#ffd600',
   green: '#39ff14',
+  red: '#ff3b30', // menace / detection UNIQUEMENT (cf. CLAUDE.md regle 1)
 } as const
 
 // Meme palette en composantes 0..1 pour le shader WebGL et les sprites Canvas.
@@ -50,11 +51,29 @@ const STAGES: StageDef[] = [
 
 // Reglages de jeu -----------------------------------------------------------
 const FLUX_MAX = 100
-const TAP_GAIN_BASE = 7 // points de FLUX par tap (avant bonus combo)
-const COMBO_WINDOW = 700 // ms max entre deux taps pour enchainer le combo
 const DECAY_PER_SEC = 9 // vitesse de descente de la jauge au repos
 const FLASH_MS = 950 // duree du flash SEUIL
 const STORAGE_KEY = 'taptap.save.v1'
+
+// Grammaire des combos (source de verite : docs/design/combos-et-interstices.md)
+// « Un signal propre se propage ; le bruit se fait purger. »
+const TEMPO_MIN = 250 // ms — un tempo se joue entre 250 et 600 ms
+const TEMPO_MAX = 600
+const TEMPO_TOL = 80 // ms de tolerance autour du tempo etabli
+const TEMPO_TOL_ASSIST = 120 // tolerance elargie en prefers-reduced-motion
+const NOISE_GAP = 120 // ms — en-dessous, le tap est du BRUIT
+const NOISE_RATE = 8 // taps max par fenetre glissante de 1 s
+const FREEZE_MS = 1000 // gel de la jauge apres detection du bruit
+const RING_LIFE = 1200 // ms de vie d'un anneau logique
+const RING_RMAX = 0.38 // rayon max en espace normalise (calque sur le ripple SVG)
+const RING_TOL = 0.045 // demi-bande de detection RESONANCE
+const RING_MIN_AGE = 150 // ms avant qu'un anneau devienne resonnable
+const GAIN_BASE = 1.2 // % de FLUX par PULSATION (avant multiplicateur)
+const GAIN_RESONANCE = 3 // % bonus RESONANCE
+const GAIN_INTERFERENCE = 6 // % bonus INTERFERENCE (remplace la resonance)
+const PTS_BASE = 10
+const PTS_RESONANCE = 150
+const PTS_INTERFERENCE = 500
 
 // ---------------------------------------------------------------------------
 // Persistance locale (high-score + stages debloques)
@@ -108,6 +127,25 @@ const dpr = () => Math.min(window.devicePixelRatio || 1, 2)
 
 interface StageHandle {
   tap: (nx: number, ny: number) => void
+}
+
+// Etiquette flottante de feedback (grammaire des combos).
+interface FloatLabel {
+  id: number
+  x: number
+  y: number
+  text: string
+  kind: 'gain' | 'noise'
+}
+
+// Embrasement d'un anneau resonne / flash d'interference (couche overlay,
+// les moteurs de rendu ne sont pas touches — cf. spec « Never »).
+interface Burst {
+  id: number
+  x: number
+  y: number
+  rad: number // rayon normalise de l'anneau au moment du hit
+  kind: 'res' | 'inter'
 }
 
 interface StageProps {
@@ -576,12 +614,12 @@ const Hud = memo(function Hud({
   stageName,
   score,
   highScore,
-  combo,
+  mult,
 }: {
   stageName: string
   score: number
   highScore: number
-  combo: number
+  mult: number
 }) {
   const cell: React.CSSProperties = { display: 'flex', flexDirection: 'column', lineHeight: 1.1 }
   const label: React.CSSProperties = {
@@ -614,9 +652,9 @@ const Hud = memo(function Hud({
         <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15, fontWeight: 700 }}>
           {Math.min(highScore, 999999).toString().padStart(6, '0')}
         </span>
-        {combo > 1 && (
+        {mult > 1 && (
           <span style={{ color: PALETTE.green, fontSize: 12, fontWeight: 700, marginTop: 2 }}>
-            x{Math.min(combo, 99)} COMBO
+            x{mult} CADENCE
           </span>
         )}
       </div>
@@ -624,7 +662,17 @@ const Hud = memo(function Hud({
   )
 })
 
-function FlowGauge({ flow }: { flow: number }) {
+function FlowGauge({
+  flow,
+  frozen,
+  freezeSeq,
+  reduced,
+}: {
+  flow: number
+  frozen: boolean
+  freezeSeq: number
+  reduced: boolean
+}) {
   const pct = Math.min(100, (flow / FLUX_MAX) * 100)
   const rounded = Math.round(pct)
   const hot = pct > 80
@@ -646,6 +694,7 @@ function FlowGauge({ flow }: { flow: number }) {
         </span>
       </div>
       <div
+        key={freezeSeq} // remonte a chaque detection : l'animation tt-noise rejoue
         role="progressbar"
         aria-label="FLUX"
         aria-valuenow={rounded}
@@ -655,7 +704,9 @@ function FlowGauge({ flow }: { flow: number }) {
           height: 12,
           borderRadius: 6,
           background: 'rgba(255,255,255,0.08)',
-          border: '1px solid rgba(255,255,255,0.12)',
+          // Detection du bruit : liseré rouge (menace), clignotant sauf reduced-motion.
+          border: frozen ? `1px solid ${PALETTE.red}` : '1px solid rgba(255,255,255,0.12)',
+          animation: frozen && !reduced ? 'tt-noise 0.5s linear 2' : 'none',
           overflow: 'hidden',
         }}
       >
@@ -850,7 +901,11 @@ export default function TapTap() {
   const [stageIndex, setStageIndex] = useState(saved.maxUnlocked - 1)
   const [maxUnlocked, setMaxUnlocked] = useState(saved.maxUnlocked)
   const [flow, setFlow] = useState(0)
-  const [combo, setCombo] = useState(0)
+  const [mult, setMult] = useState(1)
+  const [frozenUi, setFrozenUi] = useState(false)
+  const [freezeSeq, setFreezeSeq] = useState(0) // re-declenche l'animation de detection
+  const [labels, setLabels] = useState<FloatLabel[]>([])
+  const [bursts, setBursts] = useState<Burst[]>([])
   const [score, setScore] = useState(0)
   const [highScore, setHighScore] = useState(saved.highScore)
   const [flashSub, setFlashSub] = useState<string | null>(null)
@@ -861,16 +916,40 @@ export default function TapTap() {
   const engineRef = useRef<StageHandle>(null)
   const screenRef = useRef<HTMLDivElement>(null)
   const lastTapRef = useRef(0)
-  const comboRef = useRef(0)
   const flashingRef = useRef(false)
   const flowRef = useRef(0) // miroir synchrone du FLUX (detection de seuil pure)
+  // Grammaire des combos — etat chaud en refs (jamais de re-render 60 fps).
+  const tempoRef = useRef<number | null>(null) // T du joueur (moyenne glissante)
+  const chainRef = useRef(0) // taps enchaines dans le tempo
+  const multRef = useRef(1) // miroir du multiplicateur affiche
+  const ringsRef = useRef<{ x: number; y: number; born: number }[]>([])
+  const tapTimesRef = useRef<number[]>([]) // fenetre glissante 1 s (detection du taux)
+  const freezeUntilRef = useRef(0) // gel de la jauge apres BRUIT
+  const freezeTimeoutRef = useRef(0) // timeout du degel UI (annule/rearme a chaque detection)
+  const prevValidRef = useRef(false) // le tap precedent peut-il ancrer un tempo ?
+  const noiseLabelUntilRef = useRef(0) // throttle de l'etiquette 'bruit.'
+  const labelIdRef = useRef(0)
+  const timeoutsRef = useRef<Set<number>>(new Set()) // timers traques (nettoyes au demontage)
+  const reducedRef = useRef(reduced)
+
+  // Miroirs mis a jour hors rendu (purete du rendu) + reduced-motion leve le gel.
+  useEffect(() => {
+    reducedRef.current = reduced
+    if (reduced) {
+      freezeUntilRef.current = 0
+      window.clearTimeout(freezeTimeoutRef.current)
+      setFrozenUi(false)
+    }
+  }, [reduced])
 
   const stage = STAGES[stageIndex]
   const topStageId = glFailed ? 2 : 3
   // Contemplation : les trois couches ouvertes, au sommet accessible, hors panne.
   const contemplation = maxUnlocked >= topStageId && stage.id === topStageId && !glFailed
   const contemplationRef = useRef(contemplation)
-  contemplationRef.current = contemplation
+  useEffect(() => {
+    contemplationRef.current = contemplation
+  }, [contemplation])
 
   // Murmure de contemplation : une fois par entree (ne clignote pas au fil des taps).
   useEffect(() => {
@@ -895,15 +974,24 @@ export default function TapTap() {
     const loop = (now: number) => {
       const dt = (now - last) / 1000
       last = now
-      const decay = contemplationRef.current ? DECAY_PER_SEC * 0.4 : DECAY_PER_SEC
-      setFlow((f) => {
-        const v = Math.max(0, f - decay * dt)
-        flowRef.current = v
-        return v
-      })
-      if (comboRef.current > 0 && now - lastTapRef.current > COMBO_WINDOW) {
-        comboRef.current = 0
-        setCombo(0)
+      // Gel apres BRUIT : ni gain ni decroissance (la jauge est figee).
+      if (now >= freezeUntilRef.current) {
+        const decay = contemplationRef.current ? DECAY_PER_SEC * 0.4 : DECAY_PER_SEC
+        setFlow((f) => {
+          const v = Math.max(0, f - decay * dt)
+          flowRef.current = v
+          return v
+        })
+      }
+      // Silence plus long que le tempo + tolerance : la cadence retombe (sans penalite).
+      const tol = reducedRef.current ? TEMPO_TOL_ASSIST : TEMPO_TOL
+      if (chainRef.current > 0 && now - lastTapRef.current > (tempoRef.current ?? TEMPO_MAX) + tol) {
+        chainRef.current = 0
+        tempoRef.current = null
+        if (multRef.current !== 1) {
+          multRef.current = 1
+          setMult(1)
+        }
       }
       raf = requestAnimationFrame(loop)
     }
@@ -922,6 +1010,7 @@ export default function TapTap() {
       return
     }
     flashingRef.current = true
+    ringsRef.current.length = 0 // le moteur change : les anneaux logiques meurent avec lui
     setMaxUnlocked(nextId)
     setStageIndex(nextId - 1)
     const sub = STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name
@@ -936,33 +1025,169 @@ export default function TapTap() {
     }, FLASH_MS)
   }, [stage.id, topStageId, maxUnlocked])
 
+  // Timer traque : nettoye au demontage (pas de setState post-unmount).
+  const trackedTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      timeoutsRef.current.delete(id)
+      fn()
+    }, ms)
+    timeoutsRef.current.add(id)
+  }, [])
+
+  useEffect(() => {
+    const timeouts = timeoutsRef.current
+    return () => {
+      window.clearTimeout(freezeTimeoutRef.current)
+      timeouts.forEach((id) => window.clearTimeout(id))
+      timeouts.clear()
+    }
+  }, [])
+
+  // Etiquette ephemere au point touche (+3 %, +6 %, bruit.) — cadence humaine, pas 60 fps.
+  const pushLabel = useCallback(
+    (x: number, y: number, text: string, kind: 'gain' | 'noise') => {
+      const id = labelIdRef.current++
+      setLabels((ls) => [...ls.slice(-5), { id, x, y, text, kind }])
+      trackedTimeout(() => setLabels((ls) => ls.filter((l) => l.id !== id)), 800)
+    },
+    [trackedTimeout],
+  )
+
+  // Embrasement de l'anneau resonne (RESONANCE) / flash blanc (INTERFERENCE).
+  const pushBurst = useCallback(
+    (x: number, y: number, rad: number, kind: 'res' | 'inter') => {
+      const id = labelIdRef.current++
+      setBursts((bs) => [...bs.slice(-3), { id, x, y, rad, kind }])
+      trackedTimeout(() => setBursts((bs) => bs.filter((b) => b.id !== id)), 500)
+    },
+    [trackedTimeout],
+  )
+
   const registerTap = useCallback(
     (nx: number, ny: number) => {
       if (flashingRef.current) return
-      engineRef.current?.tap(nx, ny)
+      engineRef.current?.tap(nx, ny) // le moteur pulse TOUJOURS (le jouet repond), recompense ou pas
 
       const now = performance.now()
-      const chained = now - lastTapRef.current < COMBO_WINDOW
+      const gap = now - lastTapRef.current
+      const hadPrev = lastTapRef.current > 0
       lastTapRef.current = now
-      comboRef.current = chained ? comboRef.current + 1 : 1
-      const c = comboRef.current
-      setCombo(c)
 
-      const gain = TAP_GAIN_BASE * (1 + Math.min(c, 20) * 0.12)
-      const raw = flowRef.current + gain
+      // --- LE BRUIT : ecart trop court ou taux trop haut → la machine te detecte.
+      const times = tapTimesRef.current
+      times.push(now)
+      while (times.length && now - times[0] > 1000) times.shift()
+      if (hadPrev && (gap < NOISE_GAP || times.length > NOISE_RATE)) {
+        chainRef.current = 0
+        tempoRef.current = null
+        prevValidRef.current = false // un tap puni n'ancre jamais le tempo suivant
+        if (multRef.current !== 1) {
+          multRef.current = 1
+          setMult(1)
+        }
+        if (now >= noiseLabelUntilRef.current) {
+          noiseLabelUntilRef.current = now + 800
+          pushLabel(nx, ny, 'bruit.', 'noise')
+        }
+        if (!reducedRef.current) {
+          // Detection simple : jauge figee 1 s (ni gain ni decroissance) + liseré rouge.
+          // Re-detection : le timeout precedent est annule, l'animation rejoue (freezeSeq).
+          freezeUntilRef.current = now + FREEZE_MS
+          setFrozenUi(true)
+          setFreezeSeq((s) => s + 1)
+          window.clearTimeout(freezeTimeoutRef.current)
+          freezeTimeoutRef.current = window.setTimeout(() => setFrozenUi(false), FREEZE_MS)
+        }
+        return // 0 point, 0 FLUX
+      }
+
+      // --- Gel actif : le tap est inerte (le moteur a pulse, rien d'autre).
+      // Pas de pre-armement de chaine ni d'anneau pendant la detection.
+      if (!reducedRef.current && now < freezeUntilRef.current) {
+        prevValidRef.current = false
+        return
+      }
+
+      // --- CADENCE : tenir SON tempo (etabli par 2 taps valides, suivi en moyenne
+      // glissante CLAMPEE a [TEMPO_MIN, TEMPO_MAX] — la derive ne re-ouvre pas le spam).
+      const tol = reducedRef.current ? TEMPO_TOL_ASSIST : TEMPO_TOL
+      if (tempoRef.current !== null && Math.abs(gap - tempoRef.current) <= tol) {
+        chainRef.current += 1
+        tempoRef.current = Math.min(
+          TEMPO_MAX,
+          Math.max(TEMPO_MIN, 0.7 * tempoRef.current + 0.3 * gap),
+        )
+      } else if (
+        tempoRef.current === null &&
+        hadPrev &&
+        prevValidRef.current &&
+        gap >= TEMPO_MIN &&
+        gap <= TEMPO_MAX
+      ) {
+        tempoRef.current = gap // ce tap + le precedent (valide) etablissent le tempo
+        chainRef.current = 2
+      } else {
+        // Rompre le tempo = repartir a 1 (spec) ; ce tap pourra ancrer le suivant.
+        tempoRef.current = null
+        chainRef.current = 1
+      }
+      prevValidRef.current = true
+      const chain = chainRef.current
+      const m = chain >= 16 ? 4 : chain >= 8 ? 3 : chain >= 4 ? 2 : 1
+      if (m !== multRef.current) {
+        multRef.current = m
+        setMult(m)
+      }
+
+      // --- RESONANCE / INTERFERENCE : taper sur ses propres anneaux.
+      // Espace normalise [0,1]² etire — coherent avec le rendu (preserveAspectRatio=none).
+      const rings = ringsRef.current
+      for (let i = rings.length - 1; i >= 0; i--) {
+        if (now - rings[i].born > RING_LIFE) rings.splice(i, 1)
+      }
+      const hitRings: { x: number; y: number; rad: number }[] = []
+      for (const r of rings) {
+        const age = now - r.born
+        if (age < RING_MIN_AGE) continue
+        const rad = RING_RMAX * (age / RING_LIFE)
+        const d = Math.hypot(nx - r.x, ny - r.y)
+        if (Math.abs(d - rad) <= RING_TOL) hitRings.push({ x: r.x, y: r.y, rad })
+      }
+      const hits = hitRings.length
+
+      // --- Gains (le gel est deja sorti plus haut).
+      let fluxGain = GAIN_BASE * m
+      let pts = PTS_BASE * m
+      if (hits >= 2) {
+        fluxGain += GAIN_INTERFERENCE
+        pts += PTS_INTERFERENCE
+        pushLabel(nx, ny, '+6 %', 'gain')
+        // Flash d'interference : les deux anneaux s'embrasent en blanc.
+        pushBurst(hitRings[0].x, hitRings[0].y, hitRings[0].rad, 'inter')
+        pushBurst(hitRings[1].x, hitRings[1].y, hitRings[1].rad, 'inter')
+      } else if (hits === 1) {
+        fluxGain += GAIN_RESONANCE
+        pts += PTS_RESONANCE
+        pushLabel(nx, ny, '+3 %', 'gain')
+        // L'anneau resonne s'embrase (magenta → blanc via le glow).
+        pushBurst(hitRings[0].x, hitRings[0].y, hitRings[0].rad, 'res')
+      }
+      const raw = flowRef.current + fluxGain
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
       setFlow(nf)
       if (raw >= FLUX_MAX) triggerStageUp() // detection synchrone via flowRef (pur)
-
-      const pts = Math.round(10 * (1 + Math.min(c, 30) * 0.1))
       setScore((s) => {
         const ns = s + pts
         setHighScore((h) => (ns > h ? ns : h))
         return ns
       })
+
+      // L'anneau logique du tap (le bruit n'en cree pas : return plus haut).
+      rings.push({ x: nx, y: ny, born: now })
+      if (rings.length > 12) rings.shift()
     },
-    [triggerStageUp],
+    [triggerStageUp, pushLabel, pushBurst],
   )
 
   // Le premier contact reveille la borne ET pulse au point touche.
@@ -976,6 +1201,8 @@ export default function TapTap() {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Un geste = un tap : le 2e doigt / la paume ne sont pas du BRUIT.
+      if (!e.isPrimary) return
       e.preventDefault()
       const rect = e.currentTarget.getBoundingClientRect()
       tapAt((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height)
@@ -987,6 +1214,7 @@ export default function TapTap() {
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault()
+        if (e.repeat) return // l'auto-repeat OS n'est pas du spam volontaire
         tapAt(0.5 + (Math.random() - 0.5) * 0.3, 0.5 + (Math.random() - 0.5) * 0.3)
       }
     },
@@ -1003,6 +1231,7 @@ export default function TapTap() {
     (id: number) => {
       if (id > maxUnlocked) return
       if (STAGES[id - 1].engine === 'webgl' && glFailed) return
+      ringsRef.current.length = 0 // pas de resonance sur un anneau de l'ancien moteur
       setStageIndex(id - 1)
     },
     [maxUnlocked, glFailed],
@@ -1053,8 +1282,8 @@ export default function TapTap() {
           overflow: 'hidden',
         }}
       >
-        <Hud stageName={stage.name} score={score} highScore={highScore} combo={combo} />
-        <FlowGauge flow={flow} />
+        <Hud stageName={stage.name} score={score} highScore={highScore} mult={mult} />
+        <FlowGauge flow={flow} frozen={frozenUi} freezeSeq={freezeSeq} reduced={reduced} />
 
         {/* Ecran CRT bombe — surface de jeu unique (eveil + jeu) */}
         <div style={{ position: 'relative', flex: 1, margin: '0 14px', minHeight: 0 }}>
@@ -1090,6 +1319,54 @@ export default function TapTap() {
             {/* Scanlines + vignette CRT */}
             <div className="tt-scanlines" aria-hidden="true" />
             <div className="tt-vignette" aria-hidden="true" />
+
+            {/* Embrasement des anneaux resonnes / flash d'interference (overlay) */}
+            {bursts.map((b) => (
+              <div
+                key={b.id}
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  left: `${(b.x - b.rad) * 100}%`,
+                  top: `${(b.y - b.rad) * 100}%`,
+                  width: `${b.rad * 2 * 100}%`,
+                  height: `${b.rad * 2 * 100}%`,
+                  borderRadius: '50%',
+                  border: `2px solid ${b.kind === 'inter' ? '#ffffff' : PALETTE.magenta}`,
+                  boxShadow: `0 0 18px ${b.kind === 'inter' ? '#ffffff' : PALETTE.magenta}`,
+                  opacity: 0.9,
+                  animation: reduced ? 'none' : 'tt-ignite 0.45s ease-out forwards',
+                  pointerEvents: 'none',
+                  zIndex: 12,
+                }}
+              />
+            ))}
+
+            {/* Etiquettes ephemeres de la grammaire (+3 %, +6 %, bruit.) */}
+            {labels.map((l) => (
+              <div
+                key={l.id}
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  left: `${Math.min(0.9, Math.max(0.1, l.x)) * 100}%`,
+                  top: `${Math.min(0.92, Math.max(0.12, l.y)) * 100}%`,
+                  transform: 'translate(-50%, -120%)',
+                  color: l.kind === 'noise' ? PALETTE.red : PALETTE.green,
+                  fontFamily: 'ui-monospace, monospace',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: '0.02em',
+                  textShadow: '0 1px 6px rgba(5,1,13,0.9)',
+                  animation: reduced ? 'none' : 'tt-float 0.8s ease-out forwards',
+                  pointerEvents: 'none',
+                  zIndex: 13,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {l.text}
+              </div>
+            ))}
 
             {flashSub && <StageUpFlash sub={flashSub} reduced={reduced} />}
 
@@ -1166,6 +1443,19 @@ const KEYFRAMES = `
 @keyframes tt-rise {
   0% { opacity: 0; transform: translateY(6px); }
   100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes tt-float {
+  0% { opacity: 0; transform: translate(-50%, -80%); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -240%); }
+}
+@keyframes tt-noise {
+  0%, 100% { box-shadow: 0 0 10px rgba(255,59,48,0.55); }
+  50% { box-shadow: 0 0 0 rgba(255,59,48,0); }
+}
+@keyframes tt-ignite {
+  0% { opacity: 0.95; filter: brightness(2); }
+  100% { opacity: 0; filter: brightness(1); transform: scale(1.06); }
 }
 .tt-screen:focus-visible {
   outline: 2px solid ${PALETTE.green};
