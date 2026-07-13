@@ -1,9 +1,9 @@
 # TAP·TAP — Matrice des paliers & boss
 
 > **Statut** (2026-07-13) : cadre narratif **V3 · L'Intrus**, combat **réel avec échec**, signal **rouge = menace**.
-> **LA PORTEUSE (palier 1) — IMPLÉMENTÉE** (premier jet jouable, à équilibrer). LE ROUAGE / LE NOYAU : à venir.
+> **LA PORTEUSE (palier 1) — IMPLÉMENTÉE + combat retravaillé.** LE ROUAGE / LE NOYAU : à venir.
 >
-> **Réglages à faire (playtest) :** le combat est actuellement **trop facile** — l'INTÉGRITÉ tombe en ~5 s (taps hors charge à 3,4×mult), les *tells* sont rares (3,5 s) et sans conséquence si on les ignore. Pistes : ↑ INTÉGRITÉ, ↓ dégâts par tap, *tells* plus fréquents, et un *tell* non contré devrait coûter quelque chose (drain passif de SIGNAL) plutôt que rien. Détail : spammer (bruit) pendant une charge n'inflige rien et ne punit pas (l'anti-spam court-circuite avant la logique de combat).
+> **Charge = esquive SPATIALE** (choix Xavier) : pendant le *tell*, une **crête rouge balaie** l'écran de haut en bas ; taper **dans les creux** (loin d'elle) blesse le boss, taper **dans la crête** ronge ton SIGNAL (i-frames 300 ms). On garde le flux de tap — plus de « freeze ». Combat passé de ~5 s à **~17 s** ; la navigation compte. Réglages actuels : INTÉGRITÉ 100, dégât/tap 0,22×cadence, crête tous les 4,2 s / 1,6 s, dégât de crête 18. **Ajustement fin = playtest sur vrai téléphone** (un « masher au centre » traverse encore ~la moitié des charges via les i-frames — à resserrer si besoin). Détail connu : spammer (bruit) pendant une charge court-circuite la logique de combat.
 
 ## Prémisse — L'Intrus
 

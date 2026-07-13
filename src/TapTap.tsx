@@ -71,11 +71,19 @@ const PTS_INTERFERENCE = 500
 // Boss de fin de palier (cf. docs/design/matrice-boss.md, cadre « L'Intrus »).
 // Seuls les stages listes ont un boss auteur ; les autres gardent le SEUIL direct.
 const BOSS_STAGES: Record<number, string> = { 1: 'LA PORTEUSE' }
-const BOSS_TELL_EVERY = 3500 // ms entre deux charges (le « tell »)
-const BOSS_TELL_DUR = 1150 // ms de charge — fenetre de danger (rouge) : NE PAS taper
-const BOSS_TELL_DMG = 24 // SIGNAL perdu si tu tapes pendant la charge
-const BOSS_TAP_DMG = 3.4 // INTEGRITE par tap (× multiplicateur de cadence)
-const BOSS_RES_DMG = 9 // bonus d'INTEGRITE si le tap resonne
+const BOSS_TELL_EVERY = 4200 // ms entre deux charges (le « tell »)
+const BOSS_TELL_DUR = 1600 // ms — la crete rouge balaie l'ecran de haut en bas
+const BOSS_BAND = 0.15 // demi-hauteur (normalisee) de la crete dangereuse
+const BOSS_TELL_DMG = 18 // SIGNAL perdu par tap DANS la crete rouge
+const BOSS_HIT_IFRAME = 300 // ms d'invulnerabilite apres un coup encaisse
+const BOSS_TAP_DMG = 0.22 // INTEGRITE par tap (× multiplicateur) — combat ~20-25 s
+const BOSS_RES_DMG = 1 // bonus d'INTEGRITE si le tap resonne
+
+// Position (y normalise) de la crete pendant une charge : elle balaie de haut en bas.
+function bossDangerY(tellStart: number, tellUntil: number, now: number): number {
+  const t = Math.min(1, Math.max(0, (now - tellStart) / (tellUntil - tellStart)))
+  return 0.18 + 0.64 * t
+}
 
 // ---------------------------------------------------------------------------
 // Persistance locale (high-score + stages debloques)
@@ -617,6 +625,14 @@ interface Ignite {
   born: number
   kind: 'res' | 'inter'
 }
+interface Boss {
+  integrite: number
+  signal: number
+  tellUntil: number
+  tellStart: number
+  nextTell: number
+  lastHit: number
+}
 
 type Ref<T> = { current: T }
 
@@ -653,6 +669,7 @@ const FxCanvas = memo(function FxCanvas({
   ignitesRef,
   multRef,
   lastTapRef,
+  bossRef,
   reducedRef,
 }: {
   ringsRef: Ref<{ x: number; y: number; born: number }[]>
@@ -660,6 +677,7 @@ const FxCanvas = memo(function FxCanvas({
   ignitesRef: Ref<Ignite[]>
   multRef: Ref<number>
   lastTapRef: Ref<number>
+  bossRef: Ref<Boss | null>
   reducedRef: Ref<boolean>
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -811,6 +829,29 @@ const FxCanvas = memo(function FxCanvas({
         ctx.shadowBlur = 0
       }
 
+      // Crete rouge du boss pendant une charge : la zone a NE PAS taper (elle balaie).
+      // Dessinee meme en reduced-motion : c'est une information de jeu essentielle.
+      const bo = bossRef.current
+      if (bo && bo.tellUntil > now) {
+        const cy = bossDangerY(bo.tellStart, bo.tellUntil, now) * h
+        const bandH = BOSS_BAND * h
+        const grd = ctx.createLinearGradient(0, cy - bandH, 0, cy + bandH)
+        grd.addColorStop(0, 'rgba(255,59,48,0)')
+        grd.addColorStop(0.5, 'rgba(255,59,48,0.5)')
+        grd.addColorStop(1, 'rgba(255,59,48,0)')
+        ctx.fillStyle = grd
+        ctx.fillRect(0, cy - bandH, w, bandH * 2)
+        ctx.strokeStyle = 'rgba(255,59,48,0.95)'
+        ctx.lineWidth = 2 * ratio
+        ctx.shadowBlur = 12 * ratio
+        ctx.shadowColor = 'rgba(255,59,48,0.95)'
+        ctx.beginPath()
+        ctx.moveTo(0, cy)
+        ctx.lineTo(w, cy)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+      }
+
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
@@ -818,7 +859,7 @@ const FxCanvas = memo(function FxCanvas({
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [ringsRef, impactsRef, ignitesRef, multRef, lastTapRef, reducedRef])
+  }, [ringsRef, impactsRef, ignitesRef, multRef, lastTapRef, bossRef, reducedRef])
 
   return (
     <canvas
@@ -1223,7 +1264,7 @@ export default function TapTap() {
   const [bossSignal, setBossSignal] = useState(100)
   const [bossTell, setBossTell] = useState(false)
   const [purge, setPurge] = useState<number | null>(null) // % d'INTEGRITE restant a la purge
-  const bossRef = useRef<{ integrite: number; signal: number; tellUntil: number; nextTell: number } | null>(null)
+  const bossRef = useRef<Boss | null>(null)
 
   const engineRef = useRef<StageHandle>(null)
   const screenRef = useRef<HTMLDivElement>(null)
@@ -1332,13 +1373,13 @@ export default function TapTap() {
   }, [])
 
   const enterBoss = useCallback((name: string) => {
-    bossRef.current = { integrite: 100, signal: 100, tellUntil: 0, nextTell: 0 }
+    bossRef.current = { integrite: 100, signal: 100, tellUntil: 0, tellStart: 0, nextTell: 0, lastHit: 0 }
     setBossIntegrite(100)
     setBossSignal(100)
     setBossTell(false)
     flowRef.current = FLUX_MAX
     setFlow(FLUX_MAX)
-    setSrMsg(`${name} apparait. Vide son integrite ; ne tape pas pendant la charge.`)
+    setSrMsg(`${name} apparait. Vide son integrite ; pendant la charge, tape dans les creux.`)
     setBossName(name)
   }, [])
 
@@ -1391,13 +1432,14 @@ export default function TapTap() {
     let raf = 0
     const loop = (now: number) => {
       if (b.tellUntil > 0) {
+        // La crete balaie jusqu'a la fin de la charge (elle ne s'arrete plus au tap).
         if (now > b.tellUntil) {
-          // La charge passe sans t'avoir touche : tu as esquive.
           b.tellUntil = 0
           setBossTell(false)
           b.nextTell = now + BOSS_TELL_EVERY
         }
       } else if (now > b.nextTell) {
+        b.tellStart = now
         b.tellUntil = now + BOSS_TELL_DUR
         setBossTell(true)
       }
@@ -1556,20 +1598,23 @@ export default function TapTap() {
       rings.push({ x: nx, y: ny, born: now })
       if (rings.length > 12) rings.shift()
 
-      // --- Combat de boss : le tap frappe l'INTEGRITE (sauf pendant la charge).
+      // --- Combat de boss : la crete rouge balaie ; tape dans les creux.
       const b = bossRef.current
       if (b) {
-        if (b.tellUntil > now) {
-          // Tu tapes pendant la charge rouge → l'onde tueuse te touche.
-          b.signal = Math.max(0, b.signal - BOSS_TELL_DMG)
-          setBossSignal(b.signal)
-          b.tellUntil = 0
-          setBossTell(false)
-          b.nextTell = now + BOSS_TELL_EVERY
-          pushLabel(nx, ny, '−signal', 'noise')
-          if (b.signal <= 0) purgeBoss()
+        const inTell = b.tellUntil > now
+        const inCrest = inTell && Math.abs(ny - bossDangerY(b.tellStart, b.tellUntil, now)) < BOSS_BAND
+        if (inCrest) {
+          // Tap DANS la crete rouge → tu encaisses (i-frames pour ne pas mourir d'un coup).
+          if (now > b.lastHit + BOSS_HIT_IFRAME) {
+            b.signal = Math.max(0, b.signal - BOSS_TELL_DMG)
+            b.lastHit = now
+            setBossSignal(b.signal)
+            pushLabel(nx, ny, '−signal', 'noise')
+            if (b.signal <= 0) purgeBoss()
+          }
         } else {
-          const dmg = BOSS_TAP_DMG * m + (hits ? BOSS_RES_DMG : 0)
+          // Creux (ou hors charge) → tu blesses le boss. Frapper pendant la charge = bonus.
+          const dmg = BOSS_TAP_DMG * m + (hits ? BOSS_RES_DMG : 0) + (inTell ? 1 : 0)
           b.integrite = Math.max(0, b.integrite - dmg)
           setBossIntegrite(b.integrite)
           if (b.integrite <= 0) winBoss()
@@ -1746,6 +1791,7 @@ export default function TapTap() {
               ignitesRef={ignitesRef}
               multRef={multRef}
               lastTapRef={lastTapRef}
+              bossRef={bossRef}
               reducedRef={reducedRef}
             />
 
@@ -1806,7 +1852,7 @@ export default function TapTap() {
                     textShadow: '0 1px 8px rgba(5,1,13,0.9)',
                   }}
                 >
-                  l'onde monte — ne tape pas
+                  l'onde balaie — tape dans les creux
                 </div>
               </div>
             )}
