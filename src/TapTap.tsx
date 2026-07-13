@@ -34,12 +34,15 @@ interface StageDef {
   name: string
   engine: Engine
   tint: string
+  tapsToFill: number // nb de taps pour remplir le FLUX — la difficulte MONTE avec le niveau
 }
 
+// La difficulte grimpe par palier : atteindre MANDALA (niv 2) puis LIQUID (niv 3)
+// demande de plus en plus de taps. WAVEFORM initie, les couches profondes exigent.
 const STAGES: StageDef[] = [
-  { id: 1, name: 'WAVEFORM', engine: 'svg', tint: PALETTE.magenta },
-  { id: 2, name: 'MANDALA', engine: 'canvas', tint: PALETTE.cyan },
-  { id: 3, name: 'LIQUID', engine: 'webgl', tint: PALETTE.green },
+  { id: 1, name: 'WAVEFORM', engine: 'svg', tint: PALETTE.magenta, tapsToFill: 34 },
+  { id: 2, name: 'MANDALA', engine: 'canvas', tint: PALETTE.cyan, tapsToFill: 64 },
+  { id: 3, name: 'LIQUID', engine: 'webgl', tint: PALETTE.green, tapsToFill: 104 },
 ]
 
 // Reglages de jeu -----------------------------------------------------------
@@ -47,10 +50,10 @@ const FLUX_MAX = 100
 const FLASH_MS = 950 // duree du flash SEUIL
 const STORAGE_KEY = 'taptap.save.v1'
 
-// Remplissage SIMPLE et lisible : chaque tap remplit la barre d'une part CONSTANTE,
-// sans jamais de perte ni de piege. Calibre pour un pouce humain (~24 taps pour 100 %).
-// Taper vite fait monter la barre plus vite (plus de taps/seconde), jamais puni.
-const FILL_PER_TAP = 4.2 // % de FLUX par tap (constant : progression previsible)
+// Remplissage SIMPLE et lisible : chaque tap remplit la barre d'une part CONSTANTE
+// (= FLUX_MAX / tapsToFill du palier), sans jamais de perte ni de piege. Le nombre de
+// taps requis monte avec le niveau (cf. STAGES). Taper vite fait monter la barre plus
+// vite (plus de taps/seconde), jamais puni.
 const STREAK_WINDOW = 700 // ms : taper avant ce delai continue la serie (indulgent)
 
 // PERFORMANCE — deux variables qui pilotent le SCORE et la couleur (jamais le FLUX) :
@@ -69,11 +72,11 @@ const RING_RMAX = 0.38 // rayon max normalise de l'anneau
 // Boss de fin de palier (cf. docs/design/matrice-boss.md, cadre « L'Intrus »).
 // Seuls les stages listes ont un boss auteur ; les autres gardent le SEUIL direct.
 const BOSS_STAGES: Record<number, string> = { 1: 'LA PORTEUSE' }
-const BOSS_TELL_EVERY = 4200 // ms entre deux charges (le « tell »)
+const BOSS_TELL_EVERY = 3200 // ms entre deux charges (le « tell ») — plus frequent = plus exigeant
 const BOSS_TELL_DUR = 1600 // ms — la crete rouge balaie l'ecran de haut en bas
-const BOSS_BAND = 0.15 // demi-hauteur (normalisee) de la crete dangereuse
-const BOSS_TELL_DMG = 18 // SIGNAL perdu par tap DANS la crete rouge
-const BOSS_HIT_IFRAME = 300 // ms d'invulnerabilite apres un coup encaisse
+const BOSS_BAND = 0.16 // demi-hauteur (normalisee) de la crete dangereuse
+const BOSS_TELL_DMG = 24 // SIGNAL perdu par tap DANS la crete rouge — ignorer la charge coute cher
+const BOSS_HIT_IFRAME = 240 // ms d'invulnerabilite apres un coup encaisse (marteler la crete punit)
 const BOSS_TAP_DMG = 0.22 // INTEGRITE par tap (× multiplicateur) — combat ~20-25 s
 
 // Position (y normalise) de la crete pendant une charge : elle balaie de haut en bas.
@@ -1259,6 +1262,7 @@ export default function TapTap() {
   const lastTapRef = useRef(0)
   const flashingRef = useRef(false)
   const flowRef = useRef(0) // miroir synchrone du FLUX (detection de seuil pure)
+  const fillPerTapRef = useRef(FLUX_MAX / STAGES[stageIndex].tapsToFill) // difficulte du palier courant
   // Etat chaud en refs (jamais de re-render 60 fps).
   const streakRef = useRef(0) // ENDURANCE : taps enchaines dans la fenetre
   const cadenceRef = useRef(0) // CADENCE : moyenne glissante (EMA) du temps entre 2 tapotis
@@ -1276,6 +1280,10 @@ export default function TapTap() {
   }, [reduced])
 
   const stage = STAGES[stageIndex]
+  // La part de FLUX gagnee par tap depend du palier : plus le niveau est haut, plus il en faut.
+  useEffect(() => {
+    fillPerTapRef.current = FLUX_MAX / stage.tapsToFill
+  }, [stage])
   const topStageId = glFailed ? 2 : 3
   // Contemplation : les trois couches ouvertes, au sommet accessible, hors panne.
   const contemplation = maxUnlocked >= topStageId && stage.id === topStageId && !glFailed
@@ -1517,9 +1525,10 @@ export default function TapTap() {
         return
       }
 
-      // --- Jeu normal : chaque tap REMPLIT la barre d'une part constante (progressif,
-      // previsible, jamais de perte). La performance ne touche pas au FLUX, que le score.
-      const raw = flowRef.current + FILL_PER_TAP
+      // --- Jeu normal : chaque tap REMPLIT la barre d'une part constante propre au palier
+      // (progressif, previsible, jamais de perte). Plus le niveau est haut, plus il faut de
+      // taps. La performance ne touche pas au FLUX, seulement au score.
+      const raw = flowRef.current + fillPerTapRef.current
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
       setFlow(nf)
