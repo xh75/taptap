@@ -631,8 +631,9 @@ function ringColor(mult: number, a: number): string {
 // Repos : au-dela de ce silence, la borne « respire » et emet ses propres ondes
 // (elle reve — « quelque chose dort sous le verre ») pour appeler le premier doigt.
 const IDLE_MS = 2500
-const ATTRACT_INTERVAL = 1700 // ms entre deux ondes d'invitation
-const ATTRACT_LIFE = 2000 // ms de vie d'une onde (lente, contemplative)
+const ATTRACT_INTERVAL = 1450 // ms entre deux ondes d'invitation
+const ATTRACT_LIFE = 2200 // ms de vie d'une onde (lente, contemplative)
+const ATTRACT_ALPHA = 0.22 // opacite max d'une onde d'invitation
 
 const FxCanvas = memo(function FxCanvas({
   ringsRef,
@@ -694,7 +695,7 @@ const FxCanvas = memo(function FxCanvas({
           if (attracts.length > 4) attracts.shift()
         }
         // Souffle global (inspire/expire ~0.12 Hz), infime.
-        ctx.fillStyle = `rgba(255,255,255,${0.015 * (0.5 + 0.5 * Math.sin(now * 0.0008))})`
+        ctx.fillStyle = `rgba(255,255,255,${0.022 * (0.5 + 0.5 * Math.sin(now * 0.0008))})`
         ctx.fillRect(0, 0, w, h)
       }
       for (let i = attracts.length - 1; i >= 0; i--) {
@@ -706,16 +707,21 @@ const FxCanvas = memo(function FxCanvas({
         }
         if (age < 0) continue
         const p = age / ATTRACT_LIFE
-        const rad = RING_RMAX * p * 0.9
         // Apparait, culmine, s'efface (courbe en cloche).
-        const a = Math.sin(p * Math.PI) * 0.16
+        const a = Math.sin(p * Math.PI) * ATTRACT_ALPHA
         ctx.strokeStyle = `rgba(255,255,255,${a})`
-        ctx.lineWidth = 1.2 * ratio
-        ctx.shadowBlur = 6 * ratio
+        ctx.lineWidth = 1.3 * ratio
+        ctx.shadowBlur = 7 * ratio
         ctx.shadowColor = `rgba(255,255,255,${a})`
-        ctx.beginPath()
-        ctx.ellipse(at.x * w, at.y * h, rad * w, rad * h, 0, 0, Math.PI * 2)
-        ctx.stroke()
+        // Double anneau : l'onde principale + un echo interieur (souffle plus organique).
+        for (const k of [0.9, 0.5]) {
+          const rad = RING_RMAX * p * k
+          ctx.globalAlpha = k === 0.9 ? 1 : 0.55
+          ctx.beginPath()
+          ctx.ellipse(at.x * w, at.y * h, rad * w, rad * h, 0, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+        ctx.globalAlpha = 1
       }
       ctx.shadowBlur = 0
 
