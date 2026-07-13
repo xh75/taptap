@@ -9,7 +9,11 @@
 > **couche FX reste** (anneau au tap, flash d'impact, bloom de cadence, respiration
 > au repos, crête de boss) : c'est l'esthétique qui persiste. Ce qui disparaît, c'est
 > l'*embrasement résonance/interférence* et l'anneau « résonnable » (l'anneau est
-> désormais un simple retour visuel du tap, la teinte suivant la SÉRIE ×1→×4).
+> désormais un simple retour visuel du tap). La teinte suit la **PERFORMANCE**, elle-même
+> pilotée par **deux variables réunies** : la **CADENCE** (le temps entre deux tapotis —
+> plus il est court, plus tu performes) et l'**ENDURANCE** (la durée de tapotement — plus
+> la série dure, plus ça grimpe). La performance pilote le **score** et la couleur, jamais
+> le FLUX (la barre se remplit d'une part constante par tap).
 
 ## Principe
 

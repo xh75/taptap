@@ -47,12 +47,22 @@ const FLUX_MAX = 100
 const FLASH_MS = 950 // duree du flash SEUIL
 const STORAGE_KEY = 'taptap.save.v1'
 
-// Remplissage SIMPLE et lisible : chaque tap remplit la barre, sans jamais de perte
-// ni de piege. Calibre pour un pouce humain (~24 taps a la base pour 100 %, plus vite
-// en serie). Taper vite AIDE, n'est jamais puni.
-const FILL_PER_TAP = 4.2 // % de FLUX par tap (avant petit bonus de serie)
-const STREAK_WINDOW = 650 // ms : taper avant ce delai continue la serie (indulgent)
-const PTS_BASE = 10
+// Remplissage SIMPLE et lisible : chaque tap remplit la barre d'une part CONSTANTE,
+// sans jamais de perte ni de piege. Calibre pour un pouce humain (~24 taps pour 100 %).
+// Taper vite fait monter la barre plus vite (plus de taps/seconde), jamais puni.
+const FILL_PER_TAP = 4.2 // % de FLUX par tap (constant : progression previsible)
+const STREAK_WINDOW = 700 // ms : taper avant ce delai continue la serie (indulgent)
+
+// PERFORMANCE — deux variables qui pilotent le SCORE et la couleur (jamais le FLUX) :
+//   1. CADENCE   = le temps entre deux tapotis. Plus il est court, plus tu performes.
+//   2. ENDURANCE = la duree de tapotement (taps enchaines). Plus la serie dure, plus ca grimpe.
+// Les deux se combinent (multiplicateur de perf) ; le score grimpe avec les deux.
+const GAP_FAST = 110 // ms : cadence maximale (gap plus court = meme plafond)
+const GAP_SLOW = 520 // ms : au-dela, la cadence retombe a son minimum (×1)
+const CADENCE_BONUS = 2 // la cadence multiplie la perf de ×1 (lent) a ×3 (rapide)
+const ENDURANCE_CAP = 40 // taps enchaines au-dela desquels l'endurance plafonne
+const ENDURANCE_BONUS = 1.2 // l'endurance multiplie la perf de ×1 a ×2.2 (serie longue)
+const PTS_BASE = 10 // points de base par tap (× performance)
 const RING_LIFE = 1200 // ms de vie d'un anneau (retour visuel du tap)
 const RING_RMAX = 0.38 // rayon max normalise de l'anneau
 
@@ -906,9 +916,9 @@ const Hud = memo(function Hud({
         <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15, fontWeight: 700 }}>
           {Math.min(highScore, 999999).toString().padStart(6, '0')}
         </span>
-        {mult > 1 && (
+        {mult > 1.05 && (
           <span style={{ color: PALETTE.green, fontSize: 12, fontWeight: 700, marginTop: 2 }}>
-            SÉRIE ×{mult}
+            PERF ×{mult.toFixed(1)}
           </span>
         )}
       </div>
@@ -1250,8 +1260,9 @@ export default function TapTap() {
   const flashingRef = useRef(false)
   const flowRef = useRef(0) // miroir synchrone du FLUX (detection de seuil pure)
   // Etat chaud en refs (jamais de re-render 60 fps).
-  const streakRef = useRef(0) // taps rapproches enchaines (SERIE) — pilote le multiplicateur
-  const multRef = useRef(1) // miroir du multiplicateur affiche
+  const streakRef = useRef(0) // ENDURANCE : taps enchaines dans la fenetre
+  const cadenceRef = useRef(0) // CADENCE : moyenne glissante (EMA) du temps entre 2 tapotis
+  const multRef = useRef(1) // miroir du multiplicateur de perf affiche (aussi lu par la couche FX)
   const ringsRef = useRef<{ x: number; y: number; born: number }[]>([])
   const impactsRef = useRef<Impact[]>([]) // flashs d'impact (couche FX)
   const ignitesRef = useRef<Ignite[]>([]) // embrasements (couche FX, reserve au combat)
@@ -1291,10 +1302,11 @@ export default function TapTap() {
     if (!booted) return
     let raf = 0
     const loop = (now: number) => {
-      // Silence plus long que la fenetre de serie : la cadence (couleur + bonus)
-      // retombe a 1 — sans jamais toucher au FLUX ni au score.
+      // Silence plus long que la fenetre : endurance + cadence retombent, donc la perf
+      // revient a ×1 — sans jamais toucher au FLUX deja gagne ni au score.
       if (streakRef.current > 0 && now - lastTapRef.current > STREAK_WINDOW) {
         streakRef.current = 0
+        cadenceRef.current = 0
         if (multRef.current !== 1) {
           multRef.current = 1
           setMult(1)
@@ -1439,20 +1451,35 @@ export default function TapTap() {
       const hadPrev = lastTapRef.current > 0
       lastTapRef.current = now
 
-      // SÉRIE : taper en continu (taps rapproches) fait monter l'intensite (couleur + petit
-      // bonus). Totalement INDULGENT : une pause remet a zero, on ne PERD jamais de FLUX,
-      // taper vite n'est JAMAIS puni. C'est l'inverse de l'ancien anti-spam.
-      streakRef.current = hadPrev && gap < STREAK_WINDOW ? streakRef.current + 1 : 1
-      const s0 = streakRef.current
-      const m = s0 >= 18 ? 4 : s0 >= 10 ? 3 : s0 >= 4 ? 2 : 1
-      if (m !== multRef.current) {
-        multRef.current = m
-        setMult(m)
+      // === PERFORMANCE : deux variables, uniquement des recompenses (jamais de punition) ===
+      // 1. ENDURANCE — la duree de tapotement : taps enchaines dans la fenetre.
+      const chained = hadPrev && gap < STREAK_WINDOW
+      streakRef.current = chained ? streakRef.current + 1 : 1
+      const streak = streakRef.current
+      // 2. CADENCE — le temps entre deux tapotis, lisse (EMA) tant qu'on enchaine.
+      cadenceRef.current = chained
+        ? cadenceRef.current > 0
+          ? cadenceRef.current * 0.6 + gap * 0.4
+          : gap
+        : 0
+      const gapEma = cadenceRef.current
+
+      // Cadence : ×1 (lent / 1er tap) → ×(1+CADENCE_BONUS) (rapide). Court = performant.
+      const cadT = gapEma > 0 ? Math.min(1, Math.max(0, (GAP_SLOW - gapEma) / (GAP_SLOW - GAP_FAST))) : 0
+      const cadence = 1 + CADENCE_BONUS * cadT
+      // Endurance : ×1 → ×(1+ENDURANCE_BONUS) selon la longueur de la serie.
+      const endurance = 1 + ENDURANCE_BONUS * (Math.min(streak, ENDURANCE_CAP) / ENDURANCE_CAP)
+      // Performance = les deux combinees. Le score grimpe avec la vitesse ET la duree.
+      const perf = cadence * endurance
+      const disp = Math.round(perf * 10) / 10
+      if (disp !== multRef.current) {
+        multRef.current = disp // lu par la couche FX (couleur) + affiche dans le HUD
+        setMult(disp)
       }
       setBeat((bb) => bb + 1) // la jauge respire a chaque tap
 
-      // Retour visuel : flash d'impact + anneau (l'intensite de serie colore l'ensemble).
-      impactsRef.current.push({ x: nx, y: ny, born: now, mult: m })
+      // Retour visuel : flash d'impact + anneau (la perf colore l'ensemble : blanc→vert).
+      impactsRef.current.push({ x: nx, y: ny, born: now, mult: disp })
       if (impactsRef.current.length > 24) impactsRef.current.shift()
       const rings = ringsRef.current
       for (let i = rings.length - 1; i >= 0; i--) {
@@ -1461,7 +1488,7 @@ export default function TapTap() {
       rings.push({ x: nx, y: ny, born: now })
       if (rings.length > 12) rings.shift()
 
-      const pts = PTS_BASE * m
+      const pts = Math.round(PTS_BASE * perf)
 
       // --- Combat de boss : la crete rouge balaie ; tape dans les creux.
       const b = bossRef.current
@@ -1477,7 +1504,7 @@ export default function TapTap() {
             if (b.signal <= 0) purgeBoss()
           }
         } else {
-          const dmg = BOSS_TAP_DMG * m + (inTell ? 1 : 0)
+          const dmg = BOSS_TAP_DMG * Math.min(perf, 4) + (inTell ? 1 : 0)
           b.integrite = Math.max(0, b.integrite - dmg)
           setBossIntegrite(b.integrite)
           if (b.integrite <= 0) winBoss()
@@ -1490,8 +1517,9 @@ export default function TapTap() {
         return
       }
 
-      // --- Jeu normal : chaque tap REMPLIT la barre (progressif, jamais de perte).
-      const raw = flowRef.current + FILL_PER_TAP * (1 + (m - 1) * 0.2)
+      // --- Jeu normal : chaque tap REMPLIT la barre d'une part constante (progressif,
+      // previsible, jamais de perte). La performance ne touche pas au FLUX, que le score.
+      const raw = flowRef.current + FILL_PER_TAP
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
       setFlow(nf)
