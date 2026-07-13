@@ -628,17 +628,25 @@ function ringColor(mult: number, a: number): string {
   return `rgba(${r},${g},${b},${a})`
 }
 
+// Repos : au-dela de ce silence, la borne « respire » et emet ses propres ondes
+// (elle reve — « quelque chose dort sous le verre ») pour appeler le premier doigt.
+const IDLE_MS = 2500
+const ATTRACT_INTERVAL = 1700 // ms entre deux ondes d'invitation
+const ATTRACT_LIFE = 2000 // ms de vie d'une onde (lente, contemplative)
+
 const FxCanvas = memo(function FxCanvas({
   ringsRef,
   impactsRef,
   ignitesRef,
   multRef,
+  lastTapRef,
   reducedRef,
 }: {
   ringsRef: Ref<{ x: number; y: number; born: number }[]>
   impactsRef: Ref<Impact[]>
   ignitesRef: Ref<Ignite[]>
   multRef: Ref<number>
+  lastTapRef: Ref<number>
   reducedRef: Ref<boolean>
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -661,12 +669,55 @@ const FxCanvas = memo(function FxCanvas({
     })
     ro.observe(canvas)
 
+    // Ondes d'invitation au repos (attract mode). Blanches : le repos reste monochrome.
+    const attracts: { x: number; y: number; born: number }[] = []
+    let lastAttract = 0
+
     const loop = (now: number) => {
       ctx.clearRect(0, 0, w, h)
       const s = Math.min(w, h)
       const reduced = reducedRef.current
       const mult = multRef.current
+      const idle = now - lastTapRef.current > IDLE_MS
       ctx.globalCompositeOperation = 'lighter'
+
+      // Respiration au repos : point qui erre lentement + ondes blanches emises seules,
+      // et un tres leger souffle de luminosite. La borne reve ; tape pour lui repondre.
+      if (idle && !reduced) {
+        if (now - lastAttract > ATTRACT_INTERVAL) {
+          lastAttract = now
+          attracts.push({
+            x: 0.5 + 0.26 * Math.sin(now * 0.0006),
+            y: 0.5 + 0.19 * Math.sin(now * 0.00043 + 1.3),
+            born: now,
+          })
+          if (attracts.length > 4) attracts.shift()
+        }
+        // Souffle global (inspire/expire ~0.12 Hz), infime.
+        ctx.fillStyle = `rgba(255,255,255,${0.015 * (0.5 + 0.5 * Math.sin(now * 0.0008))})`
+        ctx.fillRect(0, 0, w, h)
+      }
+      for (let i = attracts.length - 1; i >= 0; i--) {
+        const at = attracts[i]
+        const age = now - at.born
+        if (age > ATTRACT_LIFE) {
+          attracts.splice(i, 1)
+          continue
+        }
+        if (age < 0) continue
+        const p = age / ATTRACT_LIFE
+        const rad = RING_RMAX * p * 0.9
+        // Apparait, culmine, s'efface (courbe en cloche).
+        const a = Math.sin(p * Math.PI) * 0.16
+        ctx.strokeStyle = `rgba(255,255,255,${a})`
+        ctx.lineWidth = 1.2 * ratio
+        ctx.shadowBlur = 6 * ratio
+        ctx.shadowColor = `rgba(255,255,255,${a})`
+        ctx.beginPath()
+        ctx.ellipse(at.x * w, at.y * h, rad * w, rad * h, 0, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      ctx.shadowBlur = 0
 
       // La couleur bleed-in : voile additif teinte par la cadence (des ×2), tres doux.
       // C'est ainsi que le monde monochrome se colore quand tu entres en flux.
@@ -749,7 +800,7 @@ const FxCanvas = memo(function FxCanvas({
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [ringsRef, impactsRef, ignitesRef, multRef, reducedRef])
+  }, [ringsRef, impactsRef, ignitesRef, multRef, lastTapRef, reducedRef])
 
   return (
     <canvas
@@ -1034,7 +1085,8 @@ function BootOverlay({ reduced }: { reduced: boolean }) {
         justifyContent: 'center',
         padding: '0 9vw',
         gap: 10,
-        background: PALETTE.void,
+        // Voile semi-transparent : la borne endormie « respire » derriere le texte.
+        background: 'rgba(10,10,12,0.55)',
         pointerEvents: 'none',
         zIndex: 30,
         fontFamily: 'ui-monospace, monospace',
@@ -1051,7 +1103,10 @@ function BootOverlay({ reduced }: { reduced: boolean }) {
               // Eveil monochrome : la borne dort, la couleur n'est pas encore la.
               color: isCta ? '#ffffff' : 'rgba(255,255,255,0.72)',
               opacity: isCta ? 1 : 0.72,
-              textShadow: isCta ? '0 0 12px rgba(255,255,255,0.55)' : 'none',
+              // Ombre sombre : lisible par-dessus la borne qui respire.
+              textShadow: isCta
+                ? '0 0 12px rgba(255,255,255,0.55), 0 1px 8px rgba(5,5,6,0.95)'
+                : '0 1px 8px rgba(5,5,6,0.95)',
               animation: reduced ? 'none' : isCta ? 'tt-blink 1.1s steps(2) infinite' : 'tt-rise 0.5s ease-out',
               marginTop: isCta ? 12 : 0,
             }}
@@ -1497,6 +1552,7 @@ export default function TapTap() {
               impactsRef={impactsRef}
               ignitesRef={ignitesRef}
               multRef={multRef}
+              lastTapRef={lastTapRef}
               reducedRef={reducedRef}
             />
 

@@ -24,6 +24,16 @@ Garde-fou : les âges négatifs (décalage d'horloge rAF vs `performance.now()`)
 - **MANDALA** — la couronne radiale native (existante) + l'anneau overlay.
 - **LIQUID** — l'onde de choc du shader (existante) + l'anneau overlay.
 
+## Le repos qui respire (attract mode)
+
+« quelque chose dort sous le verre » — rendu visible. Au-delà de **2,5 s sans tap** (et pendant tout l'éveil), la borne *rêve* :
+
+- **Ondes d'invitation** — elle émet ses propres anneaux **blancs** (le repos reste monochrome) depuis un point qui erre lentement (Lissajous), un toutes les ~1,7 s, apparition-culmination-effacement en cloche. Comme des taps qu'on ne t'a pas demandés : elle te montre où poser le doigt.
+- **Souffle global** — un voile de luminosité infime inspire/expire (~0,12 Hz).
+- **Boot transparent** — l'écran d'éveil laisse voir la borne qui respire *derrière* le texte oracle (voile 55 % + ombre de lisibilité). La machine endormie, ses ondes qui dérivent, sous l'appel.
+
+Dès le premier tap, la couleur remplace le rêve : tu réponds, elle s'éveille. `prefers-reduced-motion` coupe l'attract.
+
 ## La jauge respire au tempo
 
 À chaque tap **dans la cadence**, un glow cyan pulse sur la jauge FLUX (`tt-beat`). C'est l'unique indice de découverte de la CADENCE : quand tu trouves ton rythme, la jauge respire avec toi (pas de métronome imposé).
