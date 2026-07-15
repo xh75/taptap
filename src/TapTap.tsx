@@ -1057,6 +1057,112 @@ function BossBar({ integrite, signal, tell }: { integrite: number; signal: numbe
   )
 }
 
+// Notice d'accueil du boss : qui il est + la marche a suivre pour gagner. La regle
+// « le mystere ne masque jamais l'action » (EXPERIENCE.md) : la voix reste oracle,
+// les etapes sont explicites. Extensible aux futurs boss via cette table.
+const BOSS_BRIEF: Record<string, { role: string; oracle: string; steps: string[] }> = {
+  'LA PORTEUSE': {
+    role: "le premier globule blanc de la borne",
+    oracle: 'elle veut noyer ton signal sous le bruit.',
+    steps: [
+      'tape sans relâche : chaque tap vide son INTÉGRITÉ',
+      "quand la crête rouge balaie l'écran, tape dans les CREUX — loin d'elle",
+      'un tap DANS la crête ronge ton SIGNAL ; à zéro, tu es purgé',
+    ],
+  },
+}
+
+// Ecran d'intro affiche a l'apparition du boss. Le combat demarre au premier tap
+// (ce tap la ne compte pas comme une attaque : il ne fait que lancer le duel).
+function BossIntro({ name, reduced }: { name: string; reduced: boolean }) {
+  const brief = BOSS_BRIEF[name]
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        padding: '0 7vw',
+        textAlign: 'center',
+        background: 'rgba(10,10,12,0.9)',
+        pointerEvents: 'none',
+        zIndex: 26,
+        fontFamily: 'ui-monospace, monospace',
+      }}
+    >
+      <div style={{ fontSize: 10, letterSpacing: '0.28em', color: PALETTE.red, fontWeight: 700 }}>
+        INTRUS DÉTECTÉ
+      </div>
+      <div
+        style={{
+          fontWeight: 800,
+          fontSize: 'clamp(26px, 8vw, 48px)',
+          letterSpacing: '0.1em',
+          color: PALETTE.red,
+          textShadow: `0 0 22px ${PALETTE.red}`,
+          animation: reduced ? 'none' : 'tt-tell 1.4s ease-in-out infinite',
+        }}
+      >
+        {name}
+      </div>
+      {brief && (
+        <div style={{ fontSize: 'clamp(11px, 3vw, 14px)', color: 'rgba(255,255,255,0.75)', maxWidth: 360 }}>
+          {brief.role} — {brief.oracle}
+        </div>
+      )}
+      {brief && (
+        <ol
+          style={{
+            listStyle: 'none',
+            margin: '6px 0 0',
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 7,
+            maxWidth: 380,
+          }}
+        >
+          {brief.steps.map((s, i) => (
+            <li
+              key={i}
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'baseline',
+                fontSize: 'clamp(11px, 3vw, 13px)',
+                lineHeight: 1.35,
+                color: 'rgba(255,255,255,0.9)',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ color: PALETTE.red, fontWeight: 700 }}>{i + 1}</span>
+              <span>{s}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div
+        style={{
+          marginTop: 12,
+          fontSize: 'clamp(12px, 3.4vw, 16px)',
+          letterSpacing: '0.12em',
+          fontWeight: 700,
+          color: '#ffffff',
+          textShadow: '0 0 12px rgba(255,255,255,0.5)',
+          animation: reduced ? 'none' : 'tt-blink 1.1s steps(2) infinite',
+        }}
+      >
+        TAPE POUR L'AFFRONTER
+      </div>
+    </div>
+  )
+}
+
 const StageSelector = memo(function StageSelector({
   current,
   maxUnlocked,
@@ -1254,8 +1360,10 @@ export default function TapTap() {
   const [bossIntegrite, setBossIntegrite] = useState(100)
   const [bossSignal, setBossSignal] = useState(100)
   const [bossTell, setBossTell] = useState(false)
+  const [bossIntro, setBossIntro] = useState(false) // notice d'accueil : le combat attend le 1er tap
   const [purge, setPurge] = useState<number | null>(null) // % d'INTEGRITE restant a la purge
   const bossRef = useRef<Boss | null>(null)
+  const bossIntroRef = useRef(false) // miroir de bossIntro (lu dans le handler de tap)
 
   const engineRef = useRef<StageHandle>(null)
   const screenRef = useRef<HTMLDivElement>(null)
@@ -1349,9 +1457,14 @@ export default function TapTap() {
     setBossIntegrite(100)
     setBossSignal(100)
     setBossTell(false)
+    // Notice d'accueil : le combat est en pause tant que le joueur n'a pas lu la marche a suivre.
+    bossIntroRef.current = true
+    setBossIntro(true)
     flowRef.current = FLUX_MAX
     setFlow(FLUX_MAX)
-    setSrMsg(`${name} apparait. Vide son integrite ; pendant la charge, tape dans les creux.`)
+    setSrMsg(
+      `${name} apparait. Pour gagner : tape sans relache pour vider son integrite ; quand la crete rouge balaie l'ecran, tape dans les creux, loin d'elle ; un tap dans la crete ronge ton signal. Tape pour commencer le combat.`,
+    )
     setBossName(name)
   }, [])
 
@@ -1395,9 +1508,10 @@ export default function TapTap() {
     doUnlock(nextId)
   }, [stage.id, topStageId, maxUnlocked, enterBoss, doUnlock])
 
-  // Boucle du boss : cadence des « tells » (charges). Ne tourne que pendant le combat.
+  // Boucle du boss : cadence des « tells » (charges). Ne tourne qu'une fois la notice
+  // fermee (le combat demarre au 1er tap) et pendant le combat.
   useEffect(() => {
-    if (!bossName) return
+    if (!bossName || bossIntro) return
     const b = bossRef.current
     if (!b) return
     b.nextTell = performance.now() + BOSS_TELL_EVERY
@@ -1419,7 +1533,7 @@ export default function TapTap() {
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [bossName])
+  }, [bossName, bossIntro])
 
   // Timer traque : nettoye au demontage (pas de setState post-unmount).
   const trackedTimeout = useCallback((fn: () => void, ms: number) => {
@@ -1549,6 +1663,14 @@ export default function TapTap() {
         retryBoss() // l'ecran de PURGE : un tap relance le combat
         return
       }
+      // Notice du boss : le 1er tap la ferme et lance le combat (il ne frappe pas encore).
+      if (bossIntroRef.current) {
+        bossIntroRef.current = false
+        setBossIntro(false)
+        lastTapRef.current = performance.now() // pas de « serie » heritee de l'intro
+        setSrMsg('Combat engage.')
+        return
+      }
       if (!booted) setBooted(true)
       registerTap(Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny)))
     },
@@ -1599,19 +1721,7 @@ export default function TapTap() {
   }, [])
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#050506',
-        padding:
-          'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
-        boxSizing: 'border-box',
-      }}
-    >
+    <div style={{ position: 'fixed', inset: 0, background: PALETTE.void, overflow: 'hidden' }}>
       <style>{KEYFRAMES}</style>
 
       {/* Region live (visuellement masquee) pour lecteur d'ecran */}
@@ -1622,235 +1732,254 @@ export default function TapTap() {
         {srMsg}
       </div>
 
-      {/* Coque de la borne */}
+      {/* Surface de jeu PLEIN ÉCRAN — le visuel generatif occupe tout l'ecran, bord a bord. */}
       <div
+        ref={screenRef}
+        role="button"
+        tabIndex={0}
+        aria-label={
+          booted
+            ? 'Ecran de jeu — tape pour pulser et remplir le FLUX'
+            : "Ecran — touche pour eveiller la borne"
+        }
+        onPointerDown={handlePointerDown}
+        onKeyDown={handleKeyDown}
+        className="tt-screen"
         style={{
-          width: '100%',
-          maxWidth: 520,
-          height: '100%',
-          maxHeight: 900,
-          display: 'flex',
-          flexDirection: 'column',
-          borderRadius: 20,
-          border: '1px solid rgba(255,255,255,0.08)',
-          background: 'linear-gradient(180deg, #141416, #050506)',
-          boxShadow: '0 0 60px rgba(255,255,255,0.05)',
+          position: 'absolute',
+          inset: 0,
+          zIndex: 0,
           overflow: 'hidden',
+          background: PALETTE.void,
+          touchAction: 'manipulation',
+          cursor: 'pointer',
         }}
       >
-        <Hud
-          stageName={bossName ?? stage.name}
-          score={score}
-          highScore={highScore}
-          mult={mult}
-          bossMode={!!bossName}
-        />
-        {bossName ? (
-          <BossBar integrite={bossIntegrite} signal={bossSignal} tell={bossTell} />
-        ) : (
-          <FlowGauge flow={flow} beat={beat} reduced={reduced} />
+        {stage.engine === 'svg' && <WaveformStage ref={engineRef} speed={speed} boss={!!bossName} />}
+        {stage.engine === 'canvas' && <MandalaStage ref={engineRef} speed={speed} />}
+        {stage.engine === 'webgl' && (
+          <LiquidStage ref={engineRef} speed={speed} onGlError={handleGlError} />
         )}
 
-        {/* Ecran CRT bombe — surface de jeu unique (eveil + jeu) */}
-        <div style={{ position: 'relative', flex: 1, margin: '0 14px', minHeight: 0 }}>
+        {/* Couche FX : anneaux + impacts + embrasements + crete de boss (rAF, refs) */}
+        <FxCanvas
+          ringsRef={ringsRef}
+          impactsRef={impactsRef}
+          ignitesRef={ignitesRef}
+          multRef={multRef}
+          lastTapRef={lastTapRef}
+          bossRef={bossRef}
+          reducedRef={reducedRef}
+        />
+
+        {/* Scanlines + vignette CRT (plein ecran) */}
+        <div className="tt-scanlines" aria-hidden="true" />
+        <div className="tt-vignette" aria-hidden="true" />
+
+        {/* Etiquettes ephemeres (combat : −signal) */}
+        {labels.map((l) => (
           <div
-            ref={screenRef}
-            role="button"
-            tabIndex={0}
-            aria-label={
-              booted
-                ? 'Ecran de jeu — tape pour pulser et remplir le FLUX'
-                : "Ecran — touche pour eveiller la borne"
-            }
-            onPointerDown={handlePointerDown}
-            onKeyDown={handleKeyDown}
-            className="tt-screen"
+            key={l.id}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: `${Math.min(0.9, Math.max(0.1, l.x)) * 100}%`,
+              top: `${Math.min(0.92, Math.max(0.12, l.y)) * 100}%`,
+              transform: 'translate(-50%, -120%)',
+              color: l.kind === 'noise' ? PALETTE.red : PALETTE.green,
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: '0.02em',
+              textShadow: '0 1px 6px rgba(5,1,13,0.9)',
+              animation: reduced ? 'none' : 'tt-float 0.8s ease-out forwards',
+              pointerEvents: 'none',
+              zIndex: 13,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {l.text}
+          </div>
+        ))}
+
+        {/* Charge du boss : bord rouge pulsant — le danger. NE PAS taper. */}
+        {bossTell && (
+          <div
+            aria-hidden="true"
             style={{
               position: 'absolute',
               inset: 0,
-              borderRadius: 16,
-              overflow: 'hidden',
-              background: PALETTE.void,
-              touchAction: 'manipulation',
-              cursor: 'pointer',
-              boxShadow: 'inset 0 0 80px rgba(0,0,0,0.9)',
+              pointerEvents: 'none',
+              zIndex: 14,
+              boxShadow: `inset 0 0 60px 8px ${PALETTE.red}`,
+              animation: reduced ? 'none' : 'tt-tell 0.6s ease-in-out infinite',
             }}
           >
-            {stage.engine === 'svg' && (
-              <WaveformStage ref={engineRef} speed={speed} boss={!!bossName} />
-            )}
-            {stage.engine === 'canvas' && <MandalaStage ref={engineRef} speed={speed} />}
-            {stage.engine === 'webgl' && (
-              <LiquidStage ref={engineRef} speed={speed} onGlError={handleGlError} />
-            )}
-
-            {/* Couche FX : anneaux resonnables + impacts + embrasements (rAF, refs) */}
-            <FxCanvas
-              ringsRef={ringsRef}
-              impactsRef={impactsRef}
-              ignitesRef={ignitesRef}
-              multRef={multRef}
-              lastTapRef={lastTapRef}
-              bossRef={bossRef}
-              reducedRef={reducedRef}
-            />
-
-            {/* Scanlines + vignette CRT */}
-            <div className="tt-scanlines" aria-hidden="true" />
-            <div className="tt-vignette" aria-hidden="true" />
-
-            {/* Etiquettes ephemeres de la grammaire (+3 %, +6 %, bruit.) */}
-            {labels.map((l) => (
-              <div
-                key={l.id}
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  left: `${Math.min(0.9, Math.max(0.1, l.x)) * 100}%`,
-                  top: `${Math.min(0.92, Math.max(0.12, l.y)) * 100}%`,
-                  transform: 'translate(-50%, -120%)',
-                  color: l.kind === 'noise' ? PALETTE.red : PALETTE.green,
-                  fontFamily: 'ui-monospace, monospace',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  letterSpacing: '0.02em',
-                  textShadow: '0 1px 6px rgba(5,1,13,0.9)',
-                  animation: reduced ? 'none' : 'tt-float 0.8s ease-out forwards',
-                  pointerEvents: 'none',
-                  zIndex: 13,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {l.text}
-              </div>
-            ))}
-
-            {/* Charge du boss : bord rouge pulsant — le danger. NE PAS taper. */}
-            {bossTell && (
-              <div
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  pointerEvents: 'none',
-                  zIndex: 14,
-                  boxShadow: `inset 0 0 60px 8px ${PALETTE.red}`,
-                  animation: reduced ? 'none' : 'tt-tell 0.6s ease-in-out infinite',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: 18,
-                    textAlign: 'center',
-                    fontFamily: 'ui-monospace, monospace',
-                    fontSize: 'clamp(11px, 3vw, 14px)',
-                    letterSpacing: '0.06em',
-                    color: PALETTE.red,
-                    textShadow: '0 1px 8px rgba(5,1,13,0.9)',
-                  }}
-                >
-                  l'onde balaie — tape dans les creux
-                </div>
-              </div>
-            )}
-
-            {/* PURGE : echec du combat. Un tap relance (gere par tapAt). */}
-            {purge !== null && (
-              <div
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  background: 'rgba(10,10,12,0.82)',
-                  pointerEvents: 'none',
-                  zIndex: 25,
-                  fontFamily: 'ui-monospace, monospace',
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: 800,
-                    fontSize: 'clamp(28px, 9vw, 60px)',
-                    letterSpacing: '0.14em',
-                    color: PALETTE.red,
-                    textShadow: `0 0 24px ${PALETTE.red}`,
-                  }}
-                >
-                  PURGE.
-                </div>
-                <div style={{ fontSize: 'clamp(11px, 3vw, 14px)', color: 'rgba(255,255,255,0.7)' }}>
-                  signal étranger effacé. l'hôte se rendort.
-                </div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
-                  il lui restait {purge}% — pose un doigt pour persister
-                </div>
-              </div>
-            )}
-
-            {flashSub && <StageUpFlash sub={flashSub} reduced={reduced} />}
-
-            {/* Contemplation : murmure une fois, stable (ne clignote pas). */}
-            {booted && whispered && !flashSub && (
-              <div
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  bottom: 16,
-                  textAlign: 'center',
-                  padding: '6px 8vw',
-                  fontFamily: 'ui-monospace, monospace',
-                  fontSize: 'clamp(11px, 3vw, 14px)',
-                  letterSpacing: '0.02em',
-                  color: 'rgba(255,255,255,0.6)',
-                  textShadow: '0 1px 8px rgba(5,1,13,0.9)',
-                  animation: reduced ? 'none' : 'tt-rise 1.2s ease-out',
-                  zIndex: 12,
-                  pointerEvents: 'none',
-                }}
-              >
-                plus rien à franchir. reste, ou recommence.
-              </div>
-            )}
-
-            {!booted && <BootOverlay reduced={reduced} />}
-          </div>
-        </div>
-
-        {glFailed && (
-          <div
-            role="status"
-            style={{
-              padding: '8px 14px 0',
-              color: 'rgba(255,255,255,0.6)', // voix oracle (ambre reserve au score)
-              fontSize: 11,
-              fontFamily: 'ui-monospace, monospace',
-              letterSpacing: '0.02em',
-              textAlign: 'center',
-            }}
-          >
-            le flux profond ne répond pas — retour aux couronnes
+            <div
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: 'calc(84px + env(safe-area-inset-bottom))',
+                textAlign: 'center',
+                fontFamily: 'ui-monospace, monospace',
+                fontSize: 'clamp(11px, 3vw, 14px)',
+                letterSpacing: '0.06em',
+                color: PALETTE.red,
+                textShadow: '0 1px 8px rgba(5,1,13,0.9)',
+              }}
+            >
+              l'onde balaie — tape dans les creux
+            </div>
           </div>
         )}
 
-        <div style={{ marginTop: 10 }}>
-          <StageSelector
-            current={stage.id}
-            maxUnlocked={maxUnlocked}
-            glFailed={glFailed}
-            onSelect={selectStage}
-          />
-        </div>
+        {/* Notice d'accueil du boss : qui il est + comment gagner (combat en pause). */}
+        {bossName && bossIntro && <BossIntro name={bossName} reduced={reduced} />}
+
+        {/* PURGE : echec du combat. Un tap relance (gere par tapAt). */}
+        {purge !== null && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: '0 7vw',
+              textAlign: 'center',
+              background: 'rgba(10,10,12,0.82)',
+              pointerEvents: 'none',
+              zIndex: 25,
+              fontFamily: 'ui-monospace, monospace',
+            }}
+          >
+            <div
+              style={{
+                fontWeight: 800,
+                fontSize: 'clamp(28px, 9vw, 60px)',
+                letterSpacing: '0.14em',
+                color: PALETTE.red,
+                textShadow: `0 0 24px ${PALETTE.red}`,
+              }}
+            >
+              PURGE.
+            </div>
+            <div style={{ fontSize: 'clamp(11px, 3vw, 14px)', color: 'rgba(255,255,255,0.7)' }}>
+              signal étranger effacé. l'hôte se rendort.
+            </div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
+              il lui restait {purge}% — pose un doigt pour persister
+            </div>
+          </div>
+        )}
+
+        {flashSub && <StageUpFlash sub={flashSub} reduced={reduced} />}
+
+        {/* Contemplation : murmure une fois, stable (ne clignote pas). */}
+        {booted && whispered && !flashSub && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 'calc(84px + env(safe-area-inset-bottom))',
+              textAlign: 'center',
+              padding: '6px 8vw',
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: 'clamp(11px, 3vw, 14px)',
+              letterSpacing: '0.02em',
+              color: 'rgba(255,255,255,0.6)',
+              textShadow: '0 1px 8px rgba(5,1,13,0.9)',
+              animation: reduced ? 'none' : 'tt-rise 1.2s ease-out',
+              zIndex: 12,
+              pointerEvents: 'none',
+            }}
+          >
+            plus rien à franchir. reste, ou recommence.
+          </div>
+        )}
+
+        {!booted && <BootOverlay reduced={reduced} />}
       </div>
+
+      {/* HUD compact en surimpression (haut). Non tactile : les taps traversent vers le jeu.
+          N'apparait qu'une fois la borne eveillee (le repos reste plein ecran et nu). */}
+      {booted && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 40,
+            pointerEvents: 'none',
+            paddingTop: 'env(safe-area-inset-top)',
+            background:
+              'linear-gradient(180deg, rgba(5,5,6,0.78) 0%, rgba(5,5,6,0.5) 55%, rgba(5,5,6,0) 100%)',
+          }}
+        >
+          <Hud
+            stageName={bossName ?? stage.name}
+            score={score}
+            highScore={highScore}
+            mult={mult}
+            bossMode={!!bossName}
+          />
+          {bossName ? (
+            <BossBar integrite={bossIntegrite} signal={bossSignal} tell={bossTell} />
+          ) : (
+            <FlowGauge flow={flow} beat={beat} reduced={reduced} />
+          )}
+        </div>
+      )}
+
+      {/* Selecteur de couche + statut de repli, compacts en bas. Le conteneur laisse
+          passer les taps ; seuls les boutons sont tactiles. */}
+      {booted && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            zIndex: 40,
+            pointerEvents: 'none',
+            paddingBottom: 'calc(8px + env(safe-area-inset-bottom))',
+            paddingTop: 6,
+            background:
+              'linear-gradient(0deg, rgba(5,5,6,0.78) 0%, rgba(5,5,6,0.5) 55%, rgba(5,5,6,0) 100%)',
+          }}
+        >
+          {glFailed && (
+            <div
+              role="status"
+              style={{
+                padding: '0 14px 6px',
+                color: 'rgba(255,255,255,0.6)',
+                fontSize: 11,
+                fontFamily: 'ui-monospace, monospace',
+                letterSpacing: '0.02em',
+                textAlign: 'center',
+              }}
+            >
+              le flux profond ne répond pas — retour aux couronnes
+            </div>
+          )}
+          <div style={{ pointerEvents: 'auto' }}>
+            <StageSelector
+              current={stage.id}
+              maxUnlocked={maxUnlocked}
+              glFailed={glFailed}
+              onSelect={selectStage}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
