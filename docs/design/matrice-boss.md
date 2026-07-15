@@ -1,11 +1,17 @@
 # TAP·TAP — Matrice des paliers & boss
 
 > **Statut** (2026-07-13) : cadre narratif **V3 · L'Intrus**, combat **réel avec échec**, signal **rouge = menace**.
-> **LA PORTEUSE (palier 1) — IMPLÉMENTÉE + combat retravaillé.** LE ROUAGE / LE NOYAU : à venir.
+> **LES TROIS BOSS SONT EN PLACE** — chaque palier se termine par un boss : **LA PORTEUSE** (niv 1), **LE ROUAGE** (niv 2), **LE NOYAU** (niv 3, finale « fin ouverte » → DÉLIVRÉ). Chacun a son identité (nom, notice d'accueil, voix). **Mécanique de combat commune** (esquive de la crête) ; la différenciation par moteur (secteur radial du ROUAGE, séquence EMP du NOYAU décrites plus bas) reste à venir.
 >
-> **Charge = esquive SPATIALE** (choix Xavier) : pendant le *tell*, une **crête rouge balaie** l'écran de haut en bas ; taper **dans les creux** (loin d'elle) blesse le boss, taper **dans la crête** ronge ton SIGNAL (i-frames 300 ms). On garde le flux de tap — plus de « freeze ». Combat passé de ~5 s à **~17 s** ; la navigation compte. Réglages actuels (durcis 2026-07-13, « trop facile ») : INTÉGRITÉ 100, dégât/tap 0,22×perf, **crête plus fréquente (tous les 3,2 s / 1,6 s)**, **dégât de crête 24**, i-frame 240 ms — ignorer ou marteler la charge coûte cher. **Ajustement fin = playtest sur vrai téléphone.**
+> **Charge = esquive SPATIALE** (choix Xavier) : pendant le *tell*, une **crête rouge balaie** l'écran de haut en bas ; taper **dans les creux** (loin d'elle) blesse le boss, taper **dans la crête** ronge ton SIGNAL. On garde le flux de tap — plus de « freeze ».
+>
+> **Difficulté croissante d'un boss à l'autre** (BOSS_DEFS) : crête plus fréquente, plus large et plus dommageable, INTÉGRITÉ plus longue à vider.
+> · LA PORTEUSE : tell 3,2 s / 1,6 s, bande 0,16, dégât crête 24, dégât/tap 0,22×perf, i-frame 240 ms.
+> · LE ROUAGE : tell 2,6 s / 1,52 s, bande 0,18, dégât crête 28, dégât/tap 0,17×perf, i-frame 220 ms.
+> · LE NOYAU : tell 2,1 s / 1,44 s, bande 0,20, dégât crête 32, dégât/tap 0,14×perf, i-frame 200 ms.
+> **Ajustement fin = playtest sur vrai téléphone.**
 
-**Difficulté par palier (2026-07-13)** : au-delà du boss, le remplissage du FLUX monte avec le niveau — WAVEFORM (niv 1) ~34 taps, MANDALA (niv 2) ~64, LIQUID (niv 3) ~104. Atteindre les couches profondes exige davantage.
+**Difficulté par palier (2026-07-13, durcie)** : le remplissage du FLUX monte avec le niveau — WAVEFORM (niv 1) ~42 taps, MANDALA (niv 2) ~84, LIQUID (niv 3) ~140. Plus le boss de fin de palier. Atteindre et purger les couches profondes exige nettement davantage.
 
 ## Prémisse — L'Intrus
 

@@ -40,9 +40,9 @@ interface StageDef {
 // La difficulte grimpe par palier : atteindre MANDALA (niv 2) puis LIQUID (niv 3)
 // demande de plus en plus de taps. WAVEFORM initie, les couches profondes exigent.
 const STAGES: StageDef[] = [
-  { id: 1, name: 'WAVEFORM', engine: 'svg', tint: PALETTE.magenta, tapsToFill: 34 },
-  { id: 2, name: 'MANDALA', engine: 'canvas', tint: PALETTE.cyan, tapsToFill: 64 },
-  { id: 3, name: 'LIQUID', engine: 'webgl', tint: PALETTE.green, tapsToFill: 104 },
+  { id: 1, name: 'WAVEFORM', engine: 'svg', tint: PALETTE.magenta, tapsToFill: 42 },
+  { id: 2, name: 'MANDALA', engine: 'canvas', tint: PALETTE.cyan, tapsToFill: 84 },
+  { id: 3, name: 'LIQUID', engine: 'webgl', tint: PALETTE.green, tapsToFill: 140 },
 ]
 
 // Reglages de jeu -----------------------------------------------------------
@@ -70,14 +70,23 @@ const RING_LIFE = 1200 // ms de vie d'un anneau (retour visuel du tap)
 const RING_RMAX = 0.38 // rayon max normalise de l'anneau
 
 // Boss de fin de palier (cf. docs/design/matrice-boss.md, cadre « L'Intrus »).
-// Seuls les stages listes ont un boss auteur ; les autres gardent le SEUIL direct.
-const BOSS_STAGES: Record<number, string> = { 1: 'LA PORTEUSE' }
-const BOSS_TELL_EVERY = 3200 // ms entre deux charges (le « tell ») — plus frequent = plus exigeant
-const BOSS_TELL_DUR = 1600 // ms — la crete rouge balaie l'ecran de haut en bas
-const BOSS_BAND = 0.16 // demi-hauteur (normalisee) de la crete dangereuse
-const BOSS_TELL_DMG = 24 // SIGNAL perdu par tap DANS la crete rouge — ignorer la charge coute cher
-const BOSS_HIT_IFRAME = 240 // ms d'invulnerabilite apres un coup encaisse (marteler la crete punit)
-const BOSS_TAP_DMG = 0.22 // INTEGRITE par tap (× multiplicateur) — combat ~20-25 s
+// CHAQUE palier se termine par un boss ; la difficulte monte d'un boss a l'autre
+// (crete plus frequente, plus large, plus dcommageable ; INTEGRITE plus longue a vider).
+// Mecanique commune : esquive spatiale de la crete rouge (differenciation par moteur = a venir).
+interface BossCfg {
+  name: string
+  tellEvery: number // ms entre deux charges
+  tellDur: number // ms de balayage de la crete
+  band: number // demi-hauteur normalisee de la crete dangereuse
+  tellDmg: number // SIGNAL perdu par tap dans la crete
+  tapDmg: number // INTEGRITE videe par tap (× perf) — plus bas = boss plus coriace
+  iframe: number // ms d'invulnerabilite apres un coup encaisse
+}
+const BOSS_DEFS: Record<number, BossCfg> = {
+  1: { name: 'LA PORTEUSE', tellEvery: 3200, tellDur: 1600, band: 0.16, tellDmg: 24, tapDmg: 0.22, iframe: 240 },
+  2: { name: 'LE ROUAGE', tellEvery: 2600, tellDur: 1520, band: 0.18, tellDmg: 28, tapDmg: 0.17, iframe: 220 },
+  3: { name: 'LE NOYAU', tellEvery: 2100, tellDur: 1440, band: 0.2, tellDmg: 32, tapDmg: 0.14, iframe: 200 },
+}
 
 // Position (y normalise) de la crete pendant une charge : elle balaie de haut en bas.
 function bossDangerY(tellStart: number, tellUntil: number, now: number): number {
@@ -91,6 +100,7 @@ function bossDangerY(tellStart: number, tellUntil: number, now: number): number 
 interface SaveData {
   highScore: number
   maxUnlocked: number
+  noyauBeaten: boolean // le boss final (LE NOYAU) a-t-il deja ete vaincu ?
 }
 
 function loadSave(): SaveData {
@@ -101,12 +111,13 @@ function loadSave(): SaveData {
       return {
         highScore: Math.max(0, Number(p.highScore) || 0),
         maxUnlocked: Math.min(3, Math.max(1, Math.round(Number(p.maxUnlocked) || 1))),
+        noyauBeaten: Boolean(p.noyauBeaten),
       }
     }
   } catch {
     /* stockage indisponible : on repart a zero, sans casser. */
   }
-  return { highScore: 0, maxUnlocked: 1 }
+  return { highScore: 0, maxUnlocked: 1, noyauBeaten: false }
 }
 
 function persistSave(data: SaveData) {
@@ -632,6 +643,13 @@ interface Boss {
   tellStart: number
   nextTell: number
   lastHit: number
+  // Reglages du boss courant (copies depuis BOSS_DEFS a l'entree en combat).
+  band: number
+  tellDmg: number
+  tapDmg: number
+  iframe: number
+  tellEvery: number
+  tellDur: number
 }
 
 type Ref<T> = { current: T }
@@ -834,7 +852,7 @@ const FxCanvas = memo(function FxCanvas({
       const bo = bossRef.current
       if (bo && bo.tellUntil > now) {
         const cy = bossDangerY(bo.tellStart, bo.tellUntil, now) * h
-        const bandH = BOSS_BAND * h
+        const bandH = bo.band * h
         const grd = ctx.createLinearGradient(0, cy - bandH, 0, cy + bandH)
         grd.addColorStop(0, 'rgba(255,59,48,0)')
         grd.addColorStop(0.5, 'rgba(255,59,48,0.5)')
@@ -1062,12 +1080,30 @@ function BossBar({ integrite, signal, tell }: { integrite: number; signal: numbe
 // les etapes sont explicites. Extensible aux futurs boss via cette table.
 const BOSS_BRIEF: Record<string, { role: string; oracle: string; steps: string[] }> = {
   'LA PORTEUSE': {
-    role: "le premier globule blanc de la borne",
+    role: 'le premier globule blanc de la borne',
     oracle: 'elle veut noyer ton signal sous le bruit.',
     steps: [
       'tape sans relâche : chaque tap vide son INTÉGRITÉ',
       "quand la crête rouge balaie l'écran, tape dans les CREUX — loin d'elle",
       'un tap DANS la crête ronge ton SIGNAL ; à zéro, tu es purgé',
+    ],
+  },
+  'LE ROUAGE': {
+    role: 'le verrou logique de la borne',
+    oracle: 'il veut te ranger dans son ordre.',
+    steps: [
+      'tape sans relâche : chaque tap enraye son INTÉGRITÉ',
+      "la lame rouge balaie plus vite et plus large — tape dans les CREUX",
+      'un tap DANS la lame ronge ton SIGNAL ; à zéro, tu es purgé',
+    ],
+  },
+  'LE NOYAU': {
+    role: 'le cœur-processeur de la borne',
+    oracle: "il calcule ta destruction. c'est la dernière couche.",
+    steps: [
+      'tape sans relâche : chaque tap fissure son INTÉGRITÉ',
+      "l'onde de calcul rouge est rapide et épaisse — tape dans les CREUX",
+      'un tap DANS l\'onde ronge ton SIGNAL ; à zéro, tu es purgé',
     ],
   },
 }
@@ -1174,8 +1210,10 @@ const StageSelector = memo(function StageSelector({
   glFailed: boolean
   onSelect: (id: number) => void
 }) {
+  // Selecteur reduit : de discretes pastilles (numero / cadenas). Le NOM du palier
+  // reste lisible dans le HUD (en haut) et dans l'aria-label — inutile de le repeter ici.
   return (
-    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', padding: '0 14px 12px' }}>
+    <div style={{ display: 'flex', gap: 6, justifyContent: 'center', padding: '0 14px' }}>
       {STAGES.map((s) => {
         const locked = s.id > maxUnlocked
         const glDown = s.engine === 'webgl' && glFailed
@@ -1192,26 +1230,24 @@ const StageSelector = memo(function StageSelector({
             aria-label={`Stage ${s.id} ${s.name}${suffix}`}
             className="tt-btn"
             style={{
-              flex: 1,
-              maxWidth: 120,
-              padding: '8px 6px',
-              minHeight: 44,
+              width: 46,
+              height: 32,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               cursor: disabled ? 'not-allowed' : 'pointer',
               borderRadius: 8,
               // Selecteur monochrome : actif = blanc (aucune teinte de stage).
               border: `1px solid ${active ? '#ffffff' : 'rgba(255,255,255,0.15)'}`,
-              background: active ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
-              color: disabled ? 'rgba(255,255,255,0.3)' : active ? '#ffffff' : 'rgba(255,255,255,0.75)',
+              background: active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)',
+              color: disabled ? 'rgba(255,255,255,0.3)' : active ? '#ffffff' : 'rgba(255,255,255,0.7)',
               fontFamily: 'ui-monospace, monospace',
-              fontSize: 11,
-              letterSpacing: '0.08em',
-              opacity: disabled ? 0.6 : 1,
+              fontSize: 13,
+              fontWeight: 700,
+              opacity: disabled ? 0.55 : 1,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 13 }} aria-hidden="true">
-              {glDown ? '⚠' : locked ? '🔒' : s.id}
-            </div>
-            <div>{s.name}</div>
+            <span aria-hidden="true">{glDown ? '⚠' : locked ? '🔒' : s.id}</span>
           </button>
         )
       })}
@@ -1225,7 +1261,7 @@ const STAGE_CRYPTIC: Record<number, string> = {
   3: "le flux profond s'ouvre",
 }
 
-function StageUpFlash({ sub, reduced }: { sub: string; reduced: boolean }) {
+function StageUpFlash({ title = 'SEUIL', sub, reduced }: { title?: string; sub: string; reduced: boolean }) {
   return (
     <div
       style={{
@@ -1252,7 +1288,7 @@ function StageUpFlash({ sub, reduced }: { sub: string; reduced: boolean }) {
           textShadow: `0 0 24px ${PALETTE.green}`,
         }}
       >
-        SEUIL
+        {title}
       </div>
       <div
         style={{
@@ -1352,6 +1388,7 @@ export default function TapTap() {
   const [score, setScore] = useState(0)
   const [highScore, setHighScore] = useState(saved.highScore)
   const [flashSub, setFlashSub] = useState<string | null>(null)
+  const [flashTitle, setFlashTitle] = useState('SEUIL') // titre du flash plein ecran (SEUIL / finale)
   const [glFailed, setGlFailed] = useState(false)
   const [whispered, setWhispered] = useState(false)
   const [srMsg, setSrMsg] = useState('')
@@ -1362,6 +1399,7 @@ export default function TapTap() {
   const [bossTell, setBossTell] = useState(false)
   const [bossIntro, setBossIntro] = useState(false) // notice d'accueil : le combat attend le 1er tap
   const [purge, setPurge] = useState<number | null>(null) // % d'INTEGRITE restant a la purge
+  const [noyauBeaten, setNoyauBeaten] = useState(saved.noyauBeaten) // boss final vaincu (persiste)
   const bossRef = useRef<Boss | null>(null)
   const bossIntroRef = useRef(false) // miroir de bossIntro (lu dans le handler de tap)
 
@@ -1401,15 +1439,15 @@ export default function TapTap() {
     setWhispered(contemplation)
   }, [contemplation])
 
-  // Persistance : maxUnlocked (rare) immediat ; highScore (chaud) debounce.
+  // Persistance : maxUnlocked / noyauBeaten (rares) immediats ; highScore (chaud) debounce.
   useEffect(() => {
-    persistSave({ highScore, maxUnlocked })
+    persistSave({ highScore, maxUnlocked, noyauBeaten })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [maxUnlocked])
+  }, [maxUnlocked, noyauBeaten])
   useEffect(() => {
-    const id = window.setTimeout(() => persistSave({ highScore, maxUnlocked }), 1000)
+    const id = window.setTimeout(() => persistSave({ highScore, maxUnlocked, noyauBeaten }), 1000)
     return () => window.clearTimeout(id)
-  }, [highScore, maxUnlocked])
+  }, [highScore, maxUnlocked, noyauBeaten])
 
   // Boucle de jeu : la SEULE mecanique de repos est la retombee de la SERIE.
   // Le FLUX ne redescend JAMAIS tout seul : la barre ne fait que se remplir, tap
@@ -1441,6 +1479,7 @@ export default function TapTap() {
     setMaxUnlocked((m) => Math.max(m, nextId))
     setStageIndex(nextId - 1)
     const sub = STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name
+    setFlashTitle('SEUIL')
     setFlashSub(sub)
     setSrMsg(`Seuil franchi. Stage ${STAGES[nextId - 1].name}. ${sub}.`)
     setScore((s) => s + 500) // bonus de passage
@@ -1452,8 +1491,21 @@ export default function TapTap() {
     }, FLASH_MS)
   }, [])
 
-  const enterBoss = useCallback((name: string) => {
-    bossRef.current = { integrite: 100, signal: 100, tellUntil: 0, tellStart: 0, nextTell: 0, lastHit: 0 }
+  const enterBoss = useCallback((cfg: BossCfg) => {
+    bossRef.current = {
+      integrite: 100,
+      signal: 100,
+      tellUntil: 0,
+      tellStart: 0,
+      nextTell: 0,
+      lastHit: 0,
+      band: cfg.band,
+      tellDmg: cfg.tellDmg,
+      tapDmg: cfg.tapDmg,
+      iframe: cfg.iframe,
+      tellEvery: cfg.tellEvery,
+      tellDur: cfg.tellDur,
+    }
     setBossIntegrite(100)
     setBossSignal(100)
     setBossTell(false)
@@ -1463,16 +1515,35 @@ export default function TapTap() {
     flowRef.current = FLUX_MAX
     setFlow(FLUX_MAX)
     setSrMsg(
-      `${name} apparait. Pour gagner : tape sans relache pour vider son integrite ; quand la crete rouge balaie l'ecran, tape dans les creux, loin d'elle ; un tap dans la crete ronge ton signal. Tape pour commencer le combat.`,
+      `${cfg.name} apparait. Pour gagner : tape sans relache pour vider son integrite ; quand la crete rouge balaie l'ecran, tape dans les creux, loin d'elle ; un tap dans la crete ronge ton signal. Tape pour commencer le combat.`,
     )
-    setBossName(name)
+    setBossName(cfg.name)
   }, [])
 
   const winBoss = useCallback(() => {
+    const sid = stage.id
     bossRef.current = null
     setBossTell(false)
     setBossName(null)
-    doUnlock(Math.min(stage.id + 1, topStageId))
+    setBossIntro(false)
+    bossIntroRef.current = false
+    if (sid < topStageId) {
+      doUnlock(sid + 1) // le boss battu ouvre le palier suivant (ceremonie SEUIL)
+    } else {
+      // Boss final (LE NOYAU) vaincu : fin ouverte -> contemplation. Pas de palier au-dela.
+      setNoyauBeaten(true)
+      flashingRef.current = true
+      setScore((s) => s + 1000)
+      setFlashTitle('DÉLIVRÉ')
+      setFlashSub('le cœur cède — tu as traversé')
+      setSrMsg('Le noyau est vaincu. Le coeur cede. Fin ouverte.')
+      window.setTimeout(() => {
+        flashingRef.current = false
+        setFlashSub(null)
+        flowRef.current = 40
+        setFlow(40)
+      }, FLASH_MS)
+    }
   }, [doUnlock, stage.id, topStageId])
 
   const purgeBoss = useCallback(() => {
@@ -1485,28 +1556,32 @@ export default function TapTap() {
   }, [])
 
   const retryBoss = useCallback(() => {
-    const bn = BOSS_STAGES[stage.id]
+    const cfg = BOSS_DEFS[stage.id]
     setPurge(null)
-    if (bn) enterBoss(bn)
+    if (cfg) enterBoss(cfg)
   }, [enterBoss, stage.id])
 
   const triggerStageUp = useCallback(() => {
     if (flashingRef.current || bossRef.current) return
+    // Boss de fin de palier : chaque palier en a un. On l'invoque tant qu'il n'a pas
+    // ete battu (pour 1 & 2 : battu <=> palier suivant deja ouvert ; pour 3 : noyauBeaten).
+    const cfg = BOSS_DEFS[stage.id]
+    if (cfg) {
+      const beaten = stage.id < topStageId ? maxUnlocked > stage.id : noyauBeaten
+      if (!beaten) {
+        enterBoss(cfg)
+        return
+      }
+    }
+    // Deja battu / pas de boss : simple re-remplissage (ou deblocage direct si applicable).
     const nextId = Math.min(stage.id + 1, topStageId)
-    // Ceremonie SEULEMENT pour un deblocage reellement nouveau (anti-farm).
     if (nextId <= stage.id || nextId <= maxUnlocked) {
       flowRef.current = FLUX_MAX
       setFlow(FLUX_MAX)
       return
     }
-    // Porte du boss : si ce stage a un boss auteur non encore battu, on l'invoque.
-    const bn = BOSS_STAGES[stage.id]
-    if (bn) {
-      enterBoss(bn)
-      return
-    }
     doUnlock(nextId)
-  }, [stage.id, topStageId, maxUnlocked, enterBoss, doUnlock])
+  }, [stage.id, topStageId, maxUnlocked, noyauBeaten, enterBoss, doUnlock])
 
   // Boucle du boss : cadence des « tells » (charges). Ne tourne qu'une fois la notice
   // fermee (le combat demarre au 1er tap) et pendant le combat.
@@ -1514,7 +1589,7 @@ export default function TapTap() {
     if (!bossName || bossIntro) return
     const b = bossRef.current
     if (!b) return
-    b.nextTell = performance.now() + BOSS_TELL_EVERY
+    b.nextTell = performance.now() + b.tellEvery
     let raf = 0
     const loop = (now: number) => {
       if (b.tellUntil > 0) {
@@ -1522,11 +1597,11 @@ export default function TapTap() {
         if (now > b.tellUntil) {
           b.tellUntil = 0
           setBossTell(false)
-          b.nextTell = now + BOSS_TELL_EVERY
+          b.nextTell = now + b.tellEvery
         }
       } else if (now > b.nextTell) {
         b.tellStart = now
-        b.tellUntil = now + BOSS_TELL_DUR
+        b.tellUntil = now + b.tellDur
         setBossTell(true)
       }
       raf = requestAnimationFrame(loop)
@@ -1616,17 +1691,17 @@ export default function TapTap() {
       const b = bossRef.current
       if (b) {
         const inTell = b.tellUntil > now
-        const inCrest = inTell && Math.abs(ny - bossDangerY(b.tellStart, b.tellUntil, now)) < BOSS_BAND
+        const inCrest = inTell && Math.abs(ny - bossDangerY(b.tellStart, b.tellUntil, now)) < b.band
         if (inCrest) {
-          if (now > b.lastHit + BOSS_HIT_IFRAME) {
-            b.signal = Math.max(0, b.signal - BOSS_TELL_DMG)
+          if (now > b.lastHit + b.iframe) {
+            b.signal = Math.max(0, b.signal - b.tellDmg)
             b.lastHit = now
             setBossSignal(b.signal)
             pushLabel(nx, ny, '−signal', 'noise')
             if (b.signal <= 0) purgeBoss()
           }
         } else {
-          const dmg = BOSS_TAP_DMG * Math.min(perf, 4) + (inTell ? 1 : 0)
+          const dmg = b.tapDmg * Math.min(perf, 4) + (inTell ? 1 : 0)
           b.integrite = Math.max(0, b.integrite - dmg)
           setBossIntegrite(b.integrite)
           if (b.integrite <= 0) winBoss()
@@ -1877,7 +1952,7 @@ export default function TapTap() {
           </div>
         )}
 
-        {flashSub && <StageUpFlash sub={flashSub} reduced={reduced} />}
+        {flashSub && <StageUpFlash title={flashTitle} sub={flashSub} reduced={reduced} />}
 
         {/* Contemplation : murmure une fois, stable (ne clignote pas). */}
         {booted && whispered && !flashSub && (

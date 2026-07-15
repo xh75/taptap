@@ -17,6 +17,8 @@
   summary: Équilibrage du combat LA PORTEUSE (trop facile) : INTÉGRITÉ tombe en ~5 s, tells rares et sans conséquence si ignorés ; un tell non contré devrait drainer le SIGNAL.
   evidence: Vérif Chromium — victoire en ~1,5 cycle de tell ; les tells n'infligent rien passivement. Plus : spam (bruit) pendant une charge court-circuite la logique de combat (ni dégât ni punition).
 
-- source_spec: `docs/design/matrice-boss.md`
-  summary: Boss LE ROUAGE (palier 2, Canvas) et LE NOYAU (palier 3, WebGL) à implémenter sur le modèle de combat de LA PORTEUSE.
-  evidence: Architecture de combat en place (enterBoss/winBoss/purgeBoss, tell, barres) ; seul le stage 1 a un boss auteur (BOSS_STAGES).
+- ✅ Boss LE ROUAGE (palier 2) et LE NOYAU (palier 3) EN PLACE — chaque palier a un boss (BOSS_DEFS),
+  difficulté croissante, notice d'accueil dédiée, finale « fin ouverte » (DÉLIVRÉ) après LE NOYAU.
+  RESTE : différencier la MÉCANIQUE par moteur (LE ROUAGE = secteur radial temporisé sur MANDALA ;
+  LE NOYAU = séquence type Simon + EMP sur LIQUID) et résoudre visuellement le décor en entité
+  (aujourd'hui seul WAVEFORM amplifie son onde ; MANDALA/LIQUID gardent la crête overlay commune).
