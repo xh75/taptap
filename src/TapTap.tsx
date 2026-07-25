@@ -37,12 +37,21 @@ interface StageDef {
   tapsToFill: number // nb de taps pour remplir le FLUX — la difficulte MONTE avec le niveau
 }
 
-// La difficulte grimpe par palier : atteindre MANDALA (niv 2) puis LIQUID (niv 3)
-// demande de plus en plus de taps. WAVEFORM initie, les couches profondes exigent.
+// ESCALADE EXPONENTIELLE de la difficulte (choix Xavier : « augmente le facteur
+// exponentiel de l'escalade du niveau »). Avant, la courbe s'essoufflait — 42 → 84 → 140,
+// soit ×2,0 puis ×1,67 (sous-lineaire en fin de course). Desormais chaque palier coute
+// DIFFICULTY_EXP fois le precedent, strictement : c'est une vraie progression geometrique.
+//   tapsToFill(n) = TAPS_BASE × DIFFICULTY_EXP^(n-1)
+// UN SEUL bouton de reglage : DIFFICULTY_EXP. Le monter durcit toute la courbe d'un coup.
+const TAPS_BASE = 42 // palier 1 : la couche d'initiation reste accessible
+const DIFFICULTY_EXP = 2.4 // facteur d'escalade entre deux paliers
+const stageTaps = (id: number) => Math.round(TAPS_BASE * Math.pow(DIFFICULTY_EXP, id - 1))
+
+// WAVEFORM initie, les couches profondes exigent : 42 → 101 → 242 taps.
 const STAGES: StageDef[] = [
-  { id: 1, name: 'WAVEFORM', engine: 'svg', tint: PALETTE.magenta, tapsToFill: 42 },
-  { id: 2, name: 'MANDALA', engine: 'canvas', tint: PALETTE.cyan, tapsToFill: 84 },
-  { id: 3, name: 'LIQUID', engine: 'webgl', tint: PALETTE.green, tapsToFill: 140 },
+  { id: 1, name: 'WAVEFORM', engine: 'svg', tint: PALETTE.magenta, tapsToFill: stageTaps(1) },
+  { id: 2, name: 'MANDALA', engine: 'canvas', tint: PALETTE.cyan, tapsToFill: stageTaps(2) },
+  { id: 3, name: 'LIQUID', engine: 'webgl', tint: PALETTE.green, tapsToFill: stageTaps(3) },
 ]
 
 // Reglages de jeu -----------------------------------------------------------
@@ -1534,7 +1543,11 @@ export default function TapTap() {
   const impactsRef = useRef<Impact[]>([]) // flashs d'impact (couche FX)
   const ignitesRef = useRef<Ignite[]>([]) // embrasements (couche FX, reserve au combat)
   const celebsRef = useRef<Celeb[]>([]) // corolles de recompense (franchissement de palier)
-  const tierRef = useRef(1) // dernier palier de perf franchi (declenche la celebration)
+  const tierRef = useRef(1) // palier courant de la serie — declenche la CELEBRATION (visuel)
+  // Palier le plus haut ayant deja paye son bonus de FLUX sur CETTE montee. Distinct de
+  // tierRef : sinon hacher son rythme (pause + 3 taps rapides) re-armerait le bonus en
+  // boucle et paierait mieux que jouer en continu — l'inverse du flow recherche.
+  const bonusTierRef = useRef(1)
   const labelIdRef = useRef(0)
   const timeoutsRef = useRef<Set<number>>(new Set()) // timers traques (nettoyes au demontage)
   const reducedRef = useRef(reduced)
@@ -1609,6 +1622,7 @@ export default function TapTap() {
       setFlashSub(null)
       flowRef.current = 14
       setFlow(14) // residu de FLUX sur la nouvelle couche
+      bonusTierRef.current = 1 // nouvelle montee : les bonus de maitrise se rearment
     }, FLASH_MS)
   }, [])
 
@@ -1664,6 +1678,7 @@ export default function TapTap() {
         setFlashSub(null)
         flowRef.current = 40
         setFlow(40)
+        bonusTierRef.current = 1
       }, FLASH_MS)
     }
   }, [doUnlock, stage.id, topStageId])
@@ -1801,7 +1816,8 @@ export default function TapTap() {
       // Elle ne se declenche qu'a la MONTEE (jamais en redescendant) : le jeu
       // celebre, il ne sanctionne pas.
       const tierNow = Math.min(4, Math.max(1, Math.round(perf)))
-      if (tierNow > tierRef.current) {
+      const tierUp = tierNow > tierRef.current
+      if (tierUp) {
         celebsRef.current.push({ x: nx, y: ny, born: now, tier: tierNow })
         if (celebsRef.current.length > 6) celebsRef.current.shift()
       }
@@ -1847,9 +1863,18 @@ export default function TapTap() {
       }
 
       // --- Jeu normal : chaque tap REMPLIT la barre d'une part constante propre au palier
-      // (progressif, previsible, jamais de perte). Plus le niveau est haut, plus il faut de
-      // taps. La performance ne touche pas au FLUX, seulement au score.
-      const raw = flowRef.current + fillPerTapRef.current
+      // (progressif, previsible, jamais de perte). Plus le niveau est haut, plus il faut de taps.
+      //
+      // COUP DE POUCE DE MAITRISE : franchir un palier de perf offre un bonus de FLUX
+      // (4 / 6 / 8 taps d'avance en ×2 / ×3 / ×4). Il tombe pile au moment ou la corolle
+      // s'ouvre : on VOIT pourquoi la barre saute. C'est ce qui empeche l'escalade
+      // exponentielle de devenir une corvee — bien jouer raccourcit la montee.
+      // Non farmable : atteindre ×4 coute bien plus de taps que le bonus n'en rend.
+      // Le bonus ne se paie qu'une fois par palier ET par montee (jamais re-armable).
+      const newBest = tierNow > bonusTierRef.current
+      if (newBest) bonusTierRef.current = tierNow
+      const bonus = newBest ? fillPerTapRef.current * tierNow * 2 : 0
+      const raw = flowRef.current + fillPerTapRef.current + bonus
       const nf = Math.min(FLUX_MAX, raw)
       flowRef.current = nf
       setFlow(nf)

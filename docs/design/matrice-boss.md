@@ -11,7 +11,10 @@
 > · LE NOYAU : tell 2,1 s / 1,44 s, bande 0,20, dégât crête 32, dégât/tap 0,14×perf, i-frame 200 ms.
 > **Ajustement fin = playtest sur vrai téléphone.**
 
-**Difficulté par palier (2026-07-13, durcie)** : le remplissage du FLUX monte avec le niveau — WAVEFORM (niv 1) ~42 taps, MANDALA (niv 2) ~84, LIQUID (niv 3) ~140. Plus le boss de fin de palier. Atteindre et purger les couches profondes exige nettement davantage.
+**Difficulté par palier — escalade EXPONENTIELLE (2026-07-25)** : `tapsToFill(n) = TAPS_BASE × DIFFICULTY_EXP^(n-1)`, avec `TAPS_BASE = 42` et **`DIFFICULTY_EXP = 2.4`** → **42 / 101 / 242 taps**. Avant, la courbe s'essoufflait (×2,0 puis ×1,67, donc sous-linéaire en fin de course) ; elle est désormais strictement géométrique. **Un seul bouton de réglage : `DIFFICULTY_EXP`.** Plus le boss de fin de palier.
+
+**Contrepoids anti-corvée — le coup de pouce de maîtrise** : une escalade exponentielle en nombre de taps risque de virer à la corvée, ce qui trahirait le cap « le plaisir de jeu d'abord ». Franchir un palier de perf offre donc un **bonus de FLUX** (4 / 6 / 8 taps d'avance en ×2 / ×3 / ×4), versé **pile au moment où la corolle s'ouvre** : on *voit* pourquoi la barre saute. Bien jouer raccourcit la montée.
+**Non exploitable** : le bonus se paie une seule fois par palier **et par montée** (`bonusTierRef`, distinct du `tierRef` visuel). Sans cette séparation, hacher son rythme (pause + quelques taps rapides) ré-armerait le bonus en boucle et paierait mieux que jouer en continu — l'inverse du flow recherché. Vérifié : flux continu **+91 %** > rythme haché **+72 %** > taps lents **+58 %** (24 taps chacun).
 
 ## Prémisse — L'Intrus
 
