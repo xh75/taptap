@@ -1752,7 +1752,7 @@ export default function TapTap() {
   }, [booted])
 
   // Ceremonie de deblocage (SEUIL → stage suivant). Reutilisee en direct OU apres un boss.
-  const doUnlock = useCallback((nextId: number) => {
+  const doUnlock = useCallback((nextId: number, bonus = 500) => {
     flashingRef.current = true
     ringsRef.current.length = 0 // le moteur change : les anneaux logiques meurent avec lui
     setMaxUnlocked((m) => Math.max(m, nextId))
@@ -1762,7 +1762,7 @@ export default function TapTap() {
     setFlashSub(sub)
     setVictory((n) => n + 1) // embrasement de la jauge : victoire notable
     setSrMsg(`Seuil franchi. Stage ${STAGES[nextId - 1].name}. ${sub}.`)
-    setScore((s) => s + 500) // bonus de passage
+    setScore((s) => s + bonus) // bonus de passage (reduit si le palier etait deja ouvert)
     window.setTimeout(() => {
       flashingRef.current = false
       setFlashSub(null)
@@ -1848,26 +1848,37 @@ export default function TapTap() {
     if (cfg) enterBoss(cfg)
   }, [enterBoss, stage.id])
 
+  // 100 % TERMINE TOUJOURS le niveau (retour Xavier : « la jauge arrive a 100 % mais le
+  // niveau ne se termine pas — incomprehensible »). Une barre pleine declenche un
+  // evenement, quel que soit l'etat de la partie :
+  //   · boss non battu  → il surgit (porte du palier)
+  //   · palier suivant  → SEUIL et bascule (meme s'il etait deja ouvert — rejouer paie
+  //     juste moins, l'anti-farm passe par le bonus, plus jamais par un non-evenement)
+  //   · sommet conquis  → SURTENSION : bonus de score, la barre se recycle a zero
   const triggerStageUp = useCallback(() => {
     if (flashingRef.current || bossRef.current) return
-    // Boss de fin de palier : chaque palier en a un. On l'invoque tant qu'il n'a pas
-    // ete battu (pour 1 & 2 : battu <=> palier suivant deja ouvert ; pour 3 : noyauBeaten).
     const cfg = BOSS_DEFS[stage.id]
-    if (cfg) {
-      const beaten = stage.id < topStageId ? maxUnlocked > stage.id : noyauBeaten
-      if (!beaten) {
-        enterBoss(cfg)
-        return
-      }
-    }
-    // Deja battu / pas de boss : simple re-remplissage (ou deblocage direct si applicable).
-    const nextId = Math.min(stage.id + 1, topStageId)
-    if (nextId <= stage.id || nextId <= maxUnlocked) {
-      flowRef.current = FLUX_MAX
-      setFlow(FLUX_MAX)
+    const beaten = stage.id === 3 ? noyauBeaten : maxUnlocked > stage.id
+    if (cfg && !beaten) {
+      enterBoss(cfg)
       return
     }
-    doUnlock(nextId)
+    const nextId = stage.id + 1
+    if (nextId <= topStageId) {
+      doUnlock(nextId, nextId > maxUnlocked ? 500 : 150)
+      return
+    }
+    // Sommet deja conquis : la boucle se referme sur elle-meme, avec recompense.
+    setVictory((n) => n + 1) // embrasement de la jauge
+    setScore((s) => {
+      const ns = s + 250
+      setHighScore((h) => (ns > h ? ns : h))
+      return ns
+    })
+    flowRef.current = 0
+    setFlow(0)
+    bonusTierRef.current = 1 // les bonus de maitrise se rearment avec la nouvelle montee
+    setSrMsg('Surtension. Le flux se recycle : +250.')
   }, [stage.id, topStageId, maxUnlocked, noyauBeaten, enterBoss, doUnlock])
 
   // Boucle du boss : cadence des « tells » (charges). Ne tourne qu'une fois la notice
