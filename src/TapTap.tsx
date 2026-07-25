@@ -636,6 +636,17 @@ interface Ignite {
   born: number
   kind: 'res' | 'inter'
 }
+// Celebration au franchissement d'un palier de performance. La recompense est un
+// EFFET GRAPHIQUE ABSTRAIT MAIS EVOCATEUR (choix Xavier, esprit « candy crush ») :
+// une corolle de branches qui s'ouvre et tourne. Elle ESCALADE avec le palier —
+// 6 branches en ×2, 9 en ×3, 12 en ×4 — donc mieux tu joues, plus la borne fleurit.
+interface Celeb {
+  x: number
+  y: number
+  born: number
+  tier: number
+}
+const CELEB_LIFE = 760 // ms
 interface Boss {
   integrite: number
   signal: number
@@ -685,6 +696,7 @@ const FxCanvas = memo(function FxCanvas({
   ringsRef,
   impactsRef,
   ignitesRef,
+  celebsRef,
   multRef,
   lastTapRef,
   bossRef,
@@ -693,6 +705,7 @@ const FxCanvas = memo(function FxCanvas({
   ringsRef: Ref<{ x: number; y: number; born: number }[]>
   impactsRef: Ref<Impact[]>
   ignitesRef: Ref<Ignite[]>
+  celebsRef: Ref<Celeb[]>
   multRef: Ref<number>
   lastTapRef: Ref<number>
   bossRef: Ref<Boss | null>
@@ -847,6 +860,47 @@ const FxCanvas = memo(function FxCanvas({
         ctx.shadowBlur = 0
       }
 
+      // CELEBRATION de palier : une corolle abstraite s'ouvre au point touche.
+      // C'est la « recompense » du jeu — evocatrice (fleur / etoile / onde de choc)
+      // sans jamais etre figurative. Plus le palier est haut, plus elle est riche.
+      const celebs = celebsRef.current
+      for (let i = celebs.length - 1; i >= 0; i--) {
+        const c = celebs[i]
+        const age = now - c.born
+        if (age > CELEB_LIFE) {
+          celebs.splice(i, 1)
+          continue
+        }
+        if (age < 0) continue
+        const p = age / CELEB_LIFE
+        const ease = 1 - Math.pow(1 - p, 3) // sortie franche puis ralentissement
+        const a = (1 - p) * 0.9
+        const col = ringColor(c.tier, a)
+        const ccx = c.x * w
+        const ccy = c.y * h
+        const rad = s * (0.05 + 0.34 * ease)
+        const branches = 3 * c.tier
+        ctx.strokeStyle = col
+        ctx.lineWidth = (1.1 + 0.55 * c.tier) * ratio
+        ctx.shadowBlur = reduced ? 0 : 14 * ratio
+        ctx.shadowColor = col
+        for (let b = 0; b < branches; b++) {
+          const ang = (b / branches) * Math.PI * 2 + p * 0.7
+          const r0 = rad * 0.42
+          ctx.beginPath()
+          ctx.moveTo(ccx + Math.cos(ang) * r0, ccy + Math.sin(ang) * r0)
+          ctx.lineTo(ccx + Math.cos(ang) * rad, ccy + Math.sin(ang) * rad)
+          ctx.stroke()
+        }
+        // Anneau de couronnement : referme la corolle.
+        ctx.globalAlpha = 0.65
+        ctx.beginPath()
+        ctx.arc(ccx, ccy, rad * 0.78, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+        ctx.shadowBlur = 0
+      }
+
       // Crete rouge du boss pendant une charge : la zone a NE PAS taper (elle balaie).
       // Dessinee meme en reduced-motion : c'est une information de jeu essentielle.
       const bo = bossRef.current
@@ -877,7 +931,7 @@ const FxCanvas = memo(function FxCanvas({
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [ringsRef, impactsRef, ignitesRef, multRef, lastTapRef, bossRef, reducedRef])
+  }, [ringsRef, impactsRef, ignitesRef, celebsRef, multRef, lastTapRef, bossRef, reducedRef])
 
   return (
     <canvas
@@ -947,62 +1001,176 @@ const Hud = memo(function Hud({
   )
 })
 
-function FlowGauge({
-  flow,
+// Nombre de plots de SIGNAL (vitalite d'intrus) affiches pendant un combat.
+const SIGNAL_PIPS = 4
+
+/* --------------------------------------------------------------------------
+ * LA JAUGE — une seule barre, partout, pour toute l'experience.
+ *
+ * Probleme resolu (retour Xavier) : « la progression ou la regression des jauges
+ * n'est pas lisible pendant le jeu ». Avant : FLUX se REMPLISSAIT en jeu normal
+ * mais INTEGRITE se VIDAIT en combat, et une 2e barre (SIGNAL) doublait la lecture.
+ * Le sens de lecture s'inversait selon le contexte.
+ *
+ * Maintenant : UNE barre, toujours au meme endroit, qui va TOUJOURS dans le meme
+ * sens — gauche → droite = je progresse. En combat elle montre la PURGE du boss
+ * (100 - integrite) : elle se remplit a mesure qu'on le vide.
+ * Le SIGNAL n'est plus une barre mais des PLOTS discrets (lisibles d'un coup d'oeil).
+ * Lisibilite peripherique : un bord lumineux marque le front d'avancee et pulse a
+ * chaque tap — on VOIT la barre pousser sans quitter le visuel des yeux.
+ * ------------------------------------------------------------------------*/
+function Gauge({
+  pct,
+  label,
+  boss,
+  tell,
+  signal,
   beat,
+  tier,
+  victory,
   reduced,
 }: {
-  flow: number
+  pct: number // 0..100 — TOUJOURS « ma progression vers le but »
+  label: string
+  boss: boolean
+  tell: boolean
+  signal: number | null // null hors combat
   beat: number
+  tier: number // palier de performance (1..4) — pilote les assets de combo
+  victory: number // compteur : s'incremente sur une victoire notable (seuil, boss)
   reduced: boolean
 }) {
-  const pct = Math.min(100, (flow / FLUX_MAX) * 100)
-  const rounded = Math.round(pct)
-  const hot = pct > 80
+  const v = Math.min(100, Math.max(0, pct))
+  const rounded = Math.round(v)
+  const hot = v > 80 // seuil/mise a mort imminente → vert (cf. palette : vert = franchissement)
+  const pipsLit = signal === null ? 0 : Math.ceil((signal / 100) * SIGNAL_PIPS)
+  const lowSignal = signal !== null && pipsLit <= 1
+
   return (
-    <div style={{ padding: '0 14px 12px' }}>
+    <div style={{ padding: '0 14px 10px' }}>
+      {/* Ligne d'etat : contexte a gauche, plots de SIGNAL + % a droite. */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
+          alignItems: 'center',
           fontSize: 10,
           letterSpacing: '0.18em',
           color: 'rgba(255,255,255,0.55)',
           marginBottom: 4,
         }}
       >
-        <span>FLUX</span>
-        <span style={{ color: hot ? PALETTE.green : 'rgba(255,255,255,0.55)', fontWeight: hot ? 700 : 400 }}>
-          {rounded}%{hot ? ' ▲' : ''}
+        <span style={{ color: boss ? PALETTE.red : 'rgba(255,255,255,0.55)', fontWeight: boss ? 700 : 400 }}>
+          {boss ? `PURGE · ${label}` : label}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* SIGNAL en plots discrets : « combien de coups je peux encore encaisser ». */}
+          {signal !== null && (
+            <span
+              style={{ display: 'flex', alignItems: 'center', gap: 3 }}
+              role="img"
+              aria-label={`Signal ${pipsLit} sur ${SIGNAL_PIPS}`}
+            >
+              {Array.from({ length: SIGNAL_PIPS }, (_, i) => {
+                const lit = i < pipsLit
+                return (
+                  <span
+                    key={i}
+                    aria-hidden="true"
+                    style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: 2,
+                      background: lit ? (lowSignal ? PALETTE.red : 'rgba(255,255,255,0.9)') : 'rgba(255,255,255,0.12)',
+                      boxShadow: lit && lowSignal ? `0 0 8px ${PALETTE.red}` : 'none',
+                      transition: 'background 140ms linear',
+                    }}
+                  />
+                )
+              })}
+            </span>
+          )}
+          <span style={{ color: hot ? PALETTE.green : 'rgba(255,255,255,0.55)', fontWeight: hot ? 700 : 400 }}>
+            {rounded}%{hot ? ' ▲' : ''}
+          </span>
         </span>
       </div>
+
       <div style={{ position: 'relative' }}>
         <div
           role="progressbar"
-          aria-label="FLUX"
+          aria-label={boss ? `Purge de ${label}` : 'FLUX'}
           aria-valuenow={rounded}
           aria-valuemin={0}
           aria-valuemax={100}
           style={{
-            height: 12,
-            borderRadius: 6,
+            position: 'relative',
+            height: 14,
+            borderRadius: 7,
             background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.12)',
+            // Le cadre porte le contexte : rouge en combat, plus vif pendant une charge.
+            border: `1px solid ${boss ? (tell ? PALETTE.red : 'rgba(255,59,48,0.5)') : 'rgba(255,255,255,0.12)'}`,
             overflow: 'hidden',
           }}
         >
           <div
             style={{
               height: '100%',
-              width: `${pct}%`,
-              // Mono par defaut ; vert seulement quand le SEUIL est imminent (evenement).
+              width: `${v}%`,
+              // Mono par defaut ; vert quand le but est imminent (evenement).
               background: hot
-                ? `linear-gradient(90deg, rgba(57,255,20,0.65), ${PALETTE.green})`
-                : 'linear-gradient(90deg, rgba(255,255,255,0.35), rgba(255,255,255,0.9))',
+                ? `linear-gradient(90deg, rgba(57,255,20,0.6), ${PALETTE.green})`
+                : 'linear-gradient(90deg, rgba(255,255,255,0.3), rgba(255,255,255,0.92))',
               boxShadow: hot ? `0 0 14px ${PALETTE.green}` : 'none',
-              transition: 'width 90ms linear',
+              transition: 'width 110ms linear',
             }}
           />
+          {/* Front d'avancee : un bord lumineux qui marque OU on en est. C'est lui
+              qui rend la progression lisible du coin de l'oeil pendant qu'on tape. */}
+          {v > 0 && v < 100 && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: `calc(${v}% - 1.5px)`,
+                width: 3,
+                background: hot ? PALETTE.green : '#ffffff',
+                boxShadow: `0 0 10px ${hot ? PALETTE.green : 'rgba(255,255,255,0.9)'}`,
+                transition: 'left 110ms linear',
+              }}
+            />
+          )}
+          {/* ASSET DE COMBO : au passage d'un palier de performance (×2/×3/×4), une
+              onde balaie la jauge dans la teinte du palier. La couleur = ta maitrise. */}
+          {tier >= 2 && !reduced && (
+            <div
+              key={`t${tier}`}
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                background: `linear-gradient(90deg, transparent, ${ringColor(tier, 0.85)}, transparent)`,
+                animation: 'tt-sweep 0.55s ease-out',
+              }}
+            />
+          )}
+          {/* ASSET DE VICTOIRE NOTABLE (seuil franchi, boss purge) : embrasement vert. */}
+          {victory > 0 && !reduced && (
+            <div
+              key={`v${victory}`}
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                background: PALETTE.green,
+                animation: 'tt-burst 0.7s ease-out',
+              }}
+            />
+          )}
         </div>
         {/* La jauge respire : un glow pulse a chaque tap. */}
         {!reduced && (
@@ -1012,64 +1180,12 @@ function FlowGauge({
             style={{
               position: 'absolute',
               inset: 0,
-              borderRadius: 6,
+              borderRadius: 7,
               pointerEvents: 'none',
               animation: 'tt-beat 0.32s ease-out',
             }}
           />
         )}
-      </div>
-    </div>
-  )
-}
-
-// Barres de combat : INTEGRITE (le boss, rouge = menace) + SIGNAL (ta vitalite).
-function BossBar({ integrite, signal, tell }: { integrite: number; signal: number; tell: boolean }) {
-  const sigLow = signal <= 35
-  const labelRow: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: 10,
-    letterSpacing: '0.18em',
-    color: 'rgba(255,255,255,0.55)',
-  }
-  return (
-    <div style={{ padding: '0 14px 12px' }}>
-      <div style={{ ...labelRow, marginBottom: 4 }}>
-        <span style={{ color: PALETTE.red, fontWeight: 700 }}>INTÉGRITÉ</span>
-        <span>{Math.round(integrite)}%</span>
-      </div>
-      <div
-        style={{
-          height: 12,
-          borderRadius: 6,
-          background: 'rgba(255,255,255,0.08)',
-          border: `1px solid ${tell ? PALETTE.red : 'rgba(255,255,255,0.12)'}`,
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          style={{
-            height: '100%',
-            width: `${integrite}%`,
-            background: 'linear-gradient(90deg, rgba(255,255,255,0.5), #ffffff)',
-            transition: 'width 120ms linear',
-          }}
-        />
-      </div>
-      <div style={{ ...labelRow, margin: '6px 0 3px' }}>
-        <span>SIGNAL</span>
-        <span style={{ color: sigLow ? PALETTE.red : 'rgba(255,255,255,0.55)' }}>{Math.round(signal)}%</span>
-      </div>
-      <div style={{ height: 6, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
-        <div
-          style={{
-            height: '100%',
-            width: `${signal}%`,
-            background: sigLow ? PALETTE.red : 'rgba(255,255,255,0.85)',
-            transition: 'width 120ms linear',
-          }}
-        />
       </div>
     </div>
   )
@@ -1389,6 +1505,7 @@ export default function TapTap() {
   const [highScore, setHighScore] = useState(saved.highScore)
   const [flashSub, setFlashSub] = useState<string | null>(null)
   const [flashTitle, setFlashTitle] = useState('SEUIL') // titre du flash plein ecran (SEUIL / finale)
+  const [victory, setVictory] = useState(0) // s'incremente a chaque victoire notable (asset de jauge)
   const [glFailed, setGlFailed] = useState(false)
   const [whispered, setWhispered] = useState(false)
   const [srMsg, setSrMsg] = useState('')
@@ -1416,6 +1533,8 @@ export default function TapTap() {
   const ringsRef = useRef<{ x: number; y: number; born: number }[]>([])
   const impactsRef = useRef<Impact[]>([]) // flashs d'impact (couche FX)
   const ignitesRef = useRef<Ignite[]>([]) // embrasements (couche FX, reserve au combat)
+  const celebsRef = useRef<Celeb[]>([]) // corolles de recompense (franchissement de palier)
+  const tierRef = useRef(1) // dernier palier de perf franchi (declenche la celebration)
   const labelIdRef = useRef(0)
   const timeoutsRef = useRef<Set<number>>(new Set()) // timers traques (nettoyes au demontage)
   const reducedRef = useRef(reduced)
@@ -1461,6 +1580,7 @@ export default function TapTap() {
       if (streakRef.current > 0 && now - lastTapRef.current > STREAK_WINDOW) {
         streakRef.current = 0
         cadenceRef.current = 0
+        tierRef.current = 1 // la prochaine serie pourra de nouveau celebrer ses paliers
         if (multRef.current !== 1) {
           multRef.current = 1
           setMult(1)
@@ -1481,6 +1601,7 @@ export default function TapTap() {
     const sub = STAGE_CRYPTIC[nextId] ?? STAGES[nextId - 1].name
     setFlashTitle('SEUIL')
     setFlashSub(sub)
+    setVictory((n) => n + 1) // embrasement de la jauge : victoire notable
     setSrMsg(`Seuil franchi. Stage ${STAGES[nextId - 1].name}. ${sub}.`)
     setScore((s) => s + 500) // bonus de passage
     window.setTimeout(() => {
@@ -1536,6 +1657,7 @@ export default function TapTap() {
       setScore((s) => s + 1000)
       setFlashTitle('DÉLIVRÉ')
       setFlashSub('le cœur cède — tu as traversé')
+      setVictory((n) => n + 1)
       setSrMsg('Le noyau est vaincu. Le coeur cede. Fin ouverte.')
       window.setTimeout(() => {
         flashingRef.current = false
@@ -1674,6 +1796,16 @@ export default function TapTap() {
         setMult(disp)
       }
       setBeat((bb) => bb + 1) // la jauge respire a chaque tap
+
+      // RECOMPENSE : franchir un palier de perf fait fleurir une corolle au doigt.
+      // Elle ne se declenche qu'a la MONTEE (jamais en redescendant) : le jeu
+      // celebre, il ne sanctionne pas.
+      const tierNow = Math.min(4, Math.max(1, Math.round(perf)))
+      if (tierNow > tierRef.current) {
+        celebsRef.current.push({ x: nx, y: ny, born: now, tier: tierNow })
+        if (celebsRef.current.length > 6) celebsRef.current.shift()
+      }
+      tierRef.current = tierNow
 
       // Retour visuel : flash d'impact + anneau (la perf colore l'ensemble : blanc→vert).
       impactsRef.current.push({ x: nx, y: ny, born: now, mult: disp })
@@ -1841,6 +1973,7 @@ export default function TapTap() {
           ringsRef={ringsRef}
           impactsRef={impactsRef}
           ignitesRef={ignitesRef}
+          celebsRef={celebsRef}
           multRef={multRef}
           lastTapRef={lastTapRef}
           bossRef={bossRef}
@@ -2005,11 +2138,19 @@ export default function TapTap() {
             mult={mult}
             bossMode={!!bossName}
           />
-          {bossName ? (
-            <BossBar integrite={bossIntegrite} signal={bossSignal} tell={bossTell} />
-          ) : (
-            <FlowGauge flow={flow} beat={beat} reduced={reduced} />
-          )}
+          {/* UNE seule jauge, quel que soit le contexte. Elle va toujours dans le meme
+              sens : gauche → droite = je progresse (en combat = purge du boss). */}
+          <Gauge
+            pct={bossName ? 100 - bossIntegrite : (flow / FLUX_MAX) * 100}
+            label={bossName ?? 'FLUX'}
+            boss={!!bossName}
+            tell={bossTell}
+            signal={bossName ? bossSignal : null}
+            beat={beat}
+            tier={Math.min(4, Math.max(1, Math.round(mult)))}
+            victory={victory}
+            reduced={reduced}
+          />
         </div>
       )}
 
@@ -2079,6 +2220,18 @@ const KEYFRAMES = `
   0% { opacity: 0; transform: translate(-50%, -80%); }
   20% { opacity: 1; }
   100% { opacity: 0; transform: translate(-50%, -240%); }
+}
+/* Asset de COMBO : une onde teintee balaie la jauge au passage d'un palier de perf. */
+@keyframes tt-sweep {
+  0% { opacity: 0; transform: translateX(-100%); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(100%); }
+}
+/* Asset de VICTOIRE NOTABLE : la jauge s'embrase brievement. */
+@keyframes tt-burst {
+  0% { opacity: 0; }
+  12% { opacity: 0.95; }
+  100% { opacity: 0; }
 }
 @keyframes tt-beat {
   0% { box-shadow: 0 0 0 rgba(255,255,255,0); }

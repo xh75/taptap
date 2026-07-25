@@ -46,6 +46,36 @@ Garde-fou : les âges négatifs (décalage d'horloge rAF vs `performance.now()`)
 
 Dès le premier tap, la couleur remplace le rêve : tu réponds, elle s'éveille. `prefers-reduced-motion` coupe l'attract.
 
+## Une seule jauge, et la récompense comme langage
+
+> **Décision Xavier (2026-07-25)** — « la progression ou la régression des jauges n'est pas
+> lisible pendant le jeu ; une seule barre suffirait, agrémentée d'assets spécifiques lors de
+> combos et/ou victoire notable. » Et le cap : **« l'accent doit être mis sur le plaisir de jeu »**,
+> « un peu comme candy crush, sauf qu'ici les récompenses sont exprimées par des effets
+> graphiques abstraits mais néanmoins évocateurs ».
+
+**Le problème** : FLUX se *remplissait* en jeu normal, mais INTÉGRITÉ se *vidait* en combat —
+le sens de lecture s'inversait selon le contexte — et une 2ᵉ barre (SIGNAL) doublait la charge.
+
+**La règle désormais : UNE seule barre, toujours au même endroit, toujours dans le même sens.**
+Gauche → droite = *je progresse*. En combat elle affiche la **PURGE** du boss (100 − intégrité) :
+elle se remplit à mesure qu'on le vide. Le **SIGNAL** n'est plus une barre mais **4 plots discrets**
+(lisibles d'un coup d'œil, « combien de coups je peux encore encaisser »).
+
+**Lisibilité périphérique** : un **front d'avancée** lumineux marque où on en est et pulse à
+chaque tap — on *voit* la barre pousser sans quitter le visuel des yeux.
+
+**La récompense (le plaisir) est graphique, jamais littérale :**
+
+| Événement | Asset |
+|---|---|
+| Tap | flash d'impact + anneau (teinte = palier de perf) |
+| **Franchissement d'un palier de perf** (×2/×3/×4) | **corolle** qui s'ouvre et tourne au doigt — **elle escalade** : 6 branches en ×2, 9 en ×3, 12 en ×4. Plus tu joues bien, plus la borne fleurit. + onde teintée qui balaie la jauge |
+| **Victoire notable** (SEUIL, boss purgé) | embrasement vert de la jauge + flash plein écran |
+
+La célébration ne se déclenche **qu'à la montée**, jamais en redescendant : le jeu célèbre,
+il ne sanctionne pas.
+
 ## La jauge respire au tempo
 
 À chaque tap **dans la cadence**, un glow cyan pulse sur la jauge FLUX (`tt-beat`). C'est l'unique indice de découverte de la CADENCE : quand tu trouves ton rythme, la jauge respire avec toi (pas de métronome imposé).
