@@ -25,5 +25,9 @@
 - ✅ 2ᵉ PHASE par boss — sous 50 % d'INTÉGRITÉ le boss se reconfigure : charges plus rapprochées
   (×0,62) et plus brèves (×0,88), et surtout MOTIF différent — tenaille (PORTEUSE), tourniquet
   (ROUAGE), implosion (NOYAU). Annonce « RECONFIGURATION » + murmure oracle + répit de 900 ms.
-  RESTE : résoudre visuellement le DÉCOR en entité (aujourd'hui seul WAVEFORM amplifie son onde ;
-  MANDALA et LIQUID gardent leur rendu ambiant pendant le combat).
+- ✅ DÉCOR RÉSOLU EN ENTITÉ sur les trois moteurs — WAVEFORM : onde amplifiée et pulsante ;
+  MANDALA : la couronne se VERROUILLE en engrenage (rotation à crans 420 ms, dents alternées,
+  œil pulsant au centre) ; LIQUID : le flux se CONDENSE en globe (croûte, veines pulsantes,
+  dehors éteint — uniform u_boss, fondu lissé). Monochrome conservé : le rouge reste à la couche FX.
+  RESTE (nouveau) : `scripts/verify-combos.mjs` périmé à régénérer ; mode assist clavier pour
+  l'esquive spatiale ; choix final LIBÉRER / CRASHER après LE NOYAU (narratif, optionnel).

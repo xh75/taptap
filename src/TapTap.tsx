@@ -363,10 +363,15 @@ const MANDALA_COLORS: [number, number, number][] = [
 ]
 
 const MandalaStage = memo(
-  forwardRef<StageHandle, StageProps>(function MandalaStage({ speed }, ref) {
+  forwardRef<StageHandle, StageProps>(function MandalaStage({ speed, boss }, ref) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const pulsesRef = useRef<Pulse[]>([])
     const colorIdxRef = useRef(0)
+    // Le combat lu par la boucle rAF via une ref (pas de re-abonnement de l'effet).
+    const bossRef = useRef(!!boss)
+    useEffect(() => {
+      bossRef.current = !!boss
+    }, [boss])
 
     useImperativeHandle(ref, () => ({
       tap: (nx, ny) => {
@@ -428,6 +433,9 @@ const MandalaStage = memo(
         ctx.globalAlpha = 1
       }
 
+      // Fondu d'entree/sortie du mode entite (0 → 1) : le decor SE RESOUT, il ne clignote pas.
+      let bossMix = 0
+
       const loop = (now: number) => {
         const t = (now / 1000) * speed
         // Trainee : voile sombre semi-transparent par-dessus la frame precedente.
@@ -440,12 +448,29 @@ const MandalaStage = memo(
         ctx.translate(w / 2, h / 2)
         const scale = Math.min(w, h)
         const arms = 12
+        bossMix += ((bossRef.current ? 1 : 0) - bossMix) * 0.04
 
-        // Couronne ambiante (le mandala respire meme sans tap).
-        const ambR = scale * (0.16 + 0.02 * Math.sin(t * 0.8))
+        // Couronne ambiante (le mandala respire meme sans tap). En combat, elle se
+        // VERROUILLE en engrenage : rotation a crans (ratchet) au lieu de la derive
+        // fluide, dents alternees, et un œil qui s'ouvre au centre — LE ROUAGE.
+        const ratchetPeriod = 420 // ms par cran — l'horloge mecanique de l'entite
+        const catchUp = Math.min(1, ((now % ratchetPeriod) / ratchetPeriod) * 6) // saut sec
+        const ratchet = ((Math.floor(now / ratchetPeriod) + catchUp) * (Math.PI * 2)) / arms / 2
+        const drift = t * 0.25
+        const gearAng = drift * (1 - bossMix) + ratchet * bossMix
+        const ambR = scale * (0.16 + 0.02 * Math.sin(t * 0.8) * (1 - bossMix) + 0.05 * bossMix)
         for (let i = 0; i < arms; i++) {
-          const a = (i / arms) * Math.PI * 2 + t * 0.25
-          dot(glows[1], Math.cos(a) * ambR, Math.sin(a) * ambR, scale * 0.02, 0.5)
+          const a = (i / arms) * Math.PI * 2 + gearAng
+          // Dents : une couronne sur deux sort du rang — silhouette d'engrenage.
+          const toothR = ambR * (1 + (i % 2 === 0 ? 0.16 : 0) * bossMix)
+          const size = scale * (0.02 + 0.012 * bossMix * (i % 2 === 0 ? 1 : 0.4))
+          dot(glows[1], Math.cos(a) * toothR, Math.sin(a) * toothR, size, 0.5 + 0.3 * bossMix)
+        }
+        if (bossMix > 0.02) {
+          // L'œil : une pupille de lumiere qui pulse au rythme des crans.
+          const blink = 0.55 + 0.45 * Math.max(0, Math.sin((now / ratchetPeriod) * Math.PI))
+          dot(glows[2], 0, 0, scale * 0.045 * bossMix, 0.85 * bossMix * blink)
+          dot(glows[1], 0, 0, scale * 0.1 * bossMix, 0.3 * bossMix)
         }
 
         // Pulses de tap : couronnes qui s'ouvrent en symetrie radiale.
@@ -517,6 +542,7 @@ uniform float u_ages[6];
 uniform vec3 u_colA;
 uniform vec3 u_colB;
 uniform vec3 u_colC;
+uniform float u_boss; // 0 → 1 : le flux se condense en globe (LE NOYAU)
 
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 float noise(vec2 p){
@@ -555,6 +581,19 @@ void main(){
   col = mix(col, u_colC, smoothstep(0.6, 1.0, f) * 0.7);
   col *= 0.55 + 0.7 * f;
   col += wave * vec3(1.0);
+
+  // LE NOYAU : le flux se condense en globe. Le dehors s'eteint (croute nette),
+  // et des VEINES pulsent sous la surface — la chaine de processeurs qui alimente
+  // le coeur. Reste monochrome : le rouge est reserve a l'attaque (couche FX).
+  if (u_boss > 0.001) {
+    float d = length(p);
+    float globe = smoothstep(0.66, 0.58, d);
+    float rim = smoothstep(0.03, 0.0, abs(d - 0.62)) * 0.8;
+    float veins = smoothstep(0.045, 0.0, abs(f - 0.62)) * globe;
+    float pulse = 0.45 + 0.55 * sin(u_time * 2.6 + f * 9.0);
+    vec3 bossCol = col * (0.25 + 0.95 * globe) + vec3(1.0) * (veins * pulse * 0.4 + rim);
+    col = mix(col, bossCol, u_boss);
+  }
   gl_FragColor = vec4(col, 1.0);
 }
 `
@@ -564,11 +603,16 @@ interface LiquidProps extends StageProps {
 }
 
 const LiquidStage = memo(
-  forwardRef<StageHandle, LiquidProps>(function LiquidStage({ speed, onGlError }, ref) {
+  forwardRef<StageHandle, LiquidProps>(function LiquidStage({ speed, boss, onGlError }, ref) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     // 6 emplacements d'onde de choc (ring buffer). born tres negatif = inactif.
     const tapsRef = useRef(Array.from({ length: 6 }, () => ({ x: 0, y: 0, born: -1e9 })))
     const ringRef = useRef(0)
+    // Le combat lu par la boucle rAF via une ref (pas de recompilation du shader).
+    const bossRef = useRef(!!boss)
+    useEffect(() => {
+      bossRef.current = !!boss
+    }, [boss])
 
     useImperativeHandle(ref, () => ({
       tap: (nx, ny) => {
@@ -639,6 +683,7 @@ const LiquidStage = memo(
       const uTime = gl.getUniformLocation(prog, 'u_time')
       const uTaps = gl.getUniformLocation(prog, 'u_taps')
       const uAges = gl.getUniformLocation(prog, 'u_ages')
+      const uBoss = gl.getUniformLocation(prog, 'u_boss')
       // Flux marbre en niveaux de gris (base mono) : sombre → clair → blanc.
       gl.uniform3fv(gl.getUniformLocation(prog, 'u_colA'), [0.13, 0.13, 0.15])
       gl.uniform3fv(gl.getUniformLocation(prog, 'u_colB'), [0.55, 0.56, 0.6])
@@ -661,10 +706,13 @@ const LiquidStage = memo(
       const tapsFlat = new Float32Array(12)
       const agesFlat = new Float32Array(6)
       let raf = 0
+      let bossMix = 0 // fondu : le flux se condense / se relache sans a-coup
 
       const loop = (now: number) => {
         gl.uniform2f(uRes, w, h)
         gl.uniform1f(uTime, ((now - start) / 1000) * speed)
+        bossMix += ((bossRef.current ? 1 : 0) - bossMix) * 0.04
+        gl.uniform1f(uBoss, bossMix)
         for (let i = 0; i < 6; i++) {
           const s = tapsRef.current[i]
           tapsFlat[i * 2] = s.x
@@ -2174,9 +2222,11 @@ export default function TapTap() {
         }}
       >
         {stage.engine === 'svg' && <WaveformStage ref={engineRef} speed={speed} boss={!!bossName} />}
-        {stage.engine === 'canvas' && <MandalaStage ref={engineRef} speed={speed} />}
+        {stage.engine === 'canvas' && (
+          <MandalaStage ref={engineRef} speed={speed} boss={!!bossName} />
+        )}
         {stage.engine === 'webgl' && (
-          <LiquidStage ref={engineRef} speed={speed} onGlError={handleGlError} />
+          <LiquidStage ref={engineRef} speed={speed} boss={!!bossName} onGlError={handleGlError} />
         )}
 
         {/* Couche FX : anneaux + impacts + embrasements + crete de boss (rAF, refs) */}
