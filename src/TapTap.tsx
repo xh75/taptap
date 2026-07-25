@@ -101,22 +101,36 @@ interface BossCfg {
   tapDmg: number // INTEGRITE videe par tap (× perf) — plus bas = boss plus coriace
   iframe: number // ms d'invulnerabilite apres un coup encaisse
   hint: string // consigne d'esquive affichee pendant la charge
+  phase2: string // ce que murmure la borne quand le boss se reconfigure
+  hint2: string // consigne d'esquive en phase 2 (le motif a change)
 }
+
+// Seuil d'INTEGRITE qui fait basculer le boss en 2e phase.
+const BOSS_PHASE2_AT = 50
+// En phase 2 : charges plus rapprochees et plus breves — la pression monte.
+const PHASE2_EVERY = 0.62
+const PHASE2_DUR = 0.88
 const BOSS_DEFS: Record<number, BossCfg> = {
   1: {
     name: 'LA PORTEUSE', kind: 'band',
     tellEvery: 3200, tellDur: 1600, band: 0.16, tellDmg: 24, tapDmg: 0.22, iframe: 240,
     hint: "l'onde balaie — tape dans les creux",
+    phase2: 'elle se dédouble.',
+    hint2: 'DEUX ondes en tenaille — vise entre elles',
   },
   2: {
     name: 'LE ROUAGE', kind: 'sector',
     tellEvery: 2600, tellDur: 1520, band: 0.5, tellDmg: 28, tapDmg: 0.17, iframe: 220,
     hint: 'la lame tourne — tape hors du secteur',
+    phase2: 'il engrène la seconde dent.',
+    hint2: 'DEUX lames opposées — tape dans un quart libre',
   },
   3: {
     name: 'LE NOYAU', kind: 'ring',
     tellEvery: 2100, tellDur: 1440, band: 0.1, tellDmg: 32, tapDmg: 0.14, iframe: 200,
     hint: "l'anneau enfle — écarte-toi de la paroi",
+    phase2: "le calcul s'inverse.",
+    hint2: "l'anneau IMPLOSE — la paroi revient vers le cœur",
   },
 }
 
@@ -129,17 +143,38 @@ const bandY = (t: number) => 0.18 + 0.64 * t // WAVEFORM : de haut en bas
 const sectorAngle = (b: Boss, t: number) => b.tellSeed + 2.2 * t // MANDALA : rotation
 const ringR = (t: number) => 0.1 + 0.52 * t // NOYAU : expansion depuis le centre
 
-// Le tap touche-t-il la zone dangereuse ? Teste EXACTEMENT ce que la couche FX dessine
+// Positions courantes des zones dangereuses. UNE seule source de verite, lue a la fois
+// par la mecanique (bossInDanger) et par le rendu (couche FX) — elles ne peuvent pas diverger.
+// PHASE 2 : le MOTIF change, pas seulement la vitesse.
+//   band   → une 2e crete remonte a contresens : une TENAILLE qui se referme
+//   sector → une 2e lame diametralement opposee : un vrai tourniquet
+//   ring   → l'anneau IMPLOSE au lieu d'enfler : le calcul s'inverse
+function bossZones(b: Boss, t: number): number[] {
+  if (b.kind === 'band') return b.phase === 1 ? [bandY(t)] : [bandY(t), bandY(1 - t)]
+  if (b.kind === 'sector') {
+    const a = sectorAngle(b, t)
+    return b.phase === 1 ? [a] : [a, a + Math.PI]
+  }
+  return [b.phase === 1 ? ringR(t) : ringR(1 - t)]
+}
+
+// Le tap touche-t-il une zone dangereuse ? Teste EXACTEMENT ce que la couche FX dessine
 // (meme espace normalise etire) — ce que tu vois est ce qui te touche.
 function bossInDanger(b: Boss, nx: number, ny: number, now: number): boolean {
-  const t = bossTellT(b, now)
-  if (b.kind === 'band') return Math.abs(ny - bandY(t)) < b.band
+  const zones = bossZones(b, bossTellT(b, now))
+  if (b.kind === 'band') return zones.some((z) => Math.abs(ny - z) < b.band)
   const dx = nx - 0.5
   const dy = ny - 0.5
-  if (b.kind === 'ring') return Math.abs(Math.hypot(dx, dy) - ringR(t)) < b.band
+  if (b.kind === 'ring') {
+    const dist = Math.hypot(dx, dy)
+    return zones.some((z) => Math.abs(dist - z) < b.band)
+  }
   // 'sector' : ecart angulaire replie sur [-PI, PI]
-  const d = Math.atan2(dy, dx) - sectorAngle(b, t)
-  return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < b.band
+  const ang = Math.atan2(dy, dx)
+  return zones.some((z) => {
+    const d = ang - z
+    return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < b.band
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +739,7 @@ interface Boss {
   lastHit: number
   // Reglages du boss courant (copies depuis BOSS_DEFS a l'entree en combat).
   kind: BossKind
+  phase: number // 1 puis 2 sous BOSS_PHASE2_AT d'INTEGRITE : le motif change
   tellSeed: number // orientation de depart de la charge (tiree a chaque tell : imprevisible)
   band: number
   tellDmg: number
@@ -964,51 +1000,57 @@ const FxCanvas = memo(function FxCanvas({
         ctx.shadowBlur = 12 * ratio
         ctx.shadowColor = RED + '0.95)'
 
+        // Une zone en phase 1, deux en phase 2 (tenaille / tourniquet).
+        const zones = bossZones(bo, t)
         if (bo.kind === 'band') {
-          // WAVEFORM — crete horizontale qui balaie du haut vers le bas.
-          const cy = bandY(t) * h
+          // WAVEFORM — crete(s) horizontale(s). En phase 2 la 2e remonte a contresens.
           const bandH = bo.band * h
-          const grd = ctx.createLinearGradient(0, cy - bandH, 0, cy + bandH)
-          grd.addColorStop(0, RED + '0)')
-          grd.addColorStop(0.5, RED + '0.5)')
-          grd.addColorStop(1, RED + '0)')
-          ctx.fillStyle = grd
-          ctx.fillRect(0, cy - bandH, w, bandH * 2)
-          ctx.beginPath()
-          ctx.moveTo(0, cy)
-          ctx.lineTo(w, cy)
-          ctx.stroke()
+          for (const z of zones) {
+            const cy = z * h
+            const grd = ctx.createLinearGradient(0, cy - bandH, 0, cy + bandH)
+            grd.addColorStop(0, RED + '0)')
+            grd.addColorStop(0.5, RED + '0.5)')
+            grd.addColorStop(1, RED + '0)')
+            ctx.fillStyle = grd
+            ctx.fillRect(0, cy - bandH, w, bandH * 2)
+            ctx.beginPath()
+            ctx.moveTo(0, cy)
+            ctx.lineTo(w, cy)
+            ctx.stroke()
+          }
         } else if (bo.kind === 'sector') {
-          // MANDALA — lame radiale qui tourne autour du centre. On la trace en espace
-          // normalise puis on l'etire : le bord visible est exactement le bord teste.
-          const a0 = sectorAngle(bo, t) - bo.band
-          const a1 = sectorAngle(bo, t) + bo.band
+          // MANDALA — lame(s) radiale(s) qui tournent. On les trace en espace normalise
+          // puis on etire : le bord visible est exactement le bord teste.
           const R = 1.5 // deborde largement l'ecran : la lame va jusqu'aux bords
           const pt = (a: number, r: number) => [(0.5 + Math.cos(a) * r) * w, (0.5 + Math.sin(a) * r) * h]
-          ctx.beginPath()
-          ctx.moveTo(0.5 * w, 0.5 * h)
-          for (let i = 0; i <= 24; i++) {
-            const [px, py] = pt(a0 + ((a1 - a0) * i) / 24, R)
-            ctx.lineTo(px, py)
-          }
-          ctx.closePath()
           const grd = ctx.createRadialGradient(0.5 * w, 0.5 * h, 0, 0.5 * w, 0.5 * h, Math.max(w, h) * 0.75)
           grd.addColorStop(0, RED + '0.55)')
           grd.addColorStop(1, RED + '0.12)')
-          ctx.fillStyle = grd
-          ctx.fill()
-          // Aretes vives : les deux bords de la lame.
-          for (const a of [a0, a1]) {
-            const [px, py] = pt(a, R)
+          for (const z of zones) {
+            const a0 = z - bo.band
+            const a1 = z + bo.band
             ctx.beginPath()
             ctx.moveTo(0.5 * w, 0.5 * h)
-            ctx.lineTo(px, py)
-            ctx.stroke()
+            for (let i = 0; i <= 24; i++) {
+              const [px, py] = pt(a0 + ((a1 - a0) * i) / 24, R)
+              ctx.lineTo(px, py)
+            }
+            ctx.closePath()
+            ctx.fillStyle = grd
+            ctx.fill()
+            // Aretes vives : les deux bords de la lame.
+            for (const a of [a0, a1]) {
+              const [px, py] = pt(a, R)
+              ctx.beginPath()
+              ctx.moveTo(0.5 * w, 0.5 * h)
+              ctx.lineTo(px, py)
+              ctx.stroke()
+            }
           }
         } else {
           // LE NOYAU — anneau de calcul qui enfle depuis le centre. Le danger est la
           // PAROI : on est sauf tout pres du coeur, ou loin dehors.
-          const r = ringR(t)
+          const r = zones[0] // phase 2 : l'anneau implose au lieu d'enfler
           const rIn = Math.max(0, r - bo.band)
           const rOut = r + bo.band
           // Remplissage EXACT de la couronne : deux ellipses en regle even-odd. Un trait
@@ -1626,6 +1668,8 @@ export default function TapTap() {
   const [bossSignal, setBossSignal] = useState(100)
   const [bossTell, setBossTell] = useState(false)
   const [bossIntro, setBossIntro] = useState(false) // notice d'accueil : le combat attend le 1er tap
+  const [bossPhase, setBossPhase] = useState(1) // 2 = le boss s'est reconfigure (motif different)
+  const [phaseMsg, setPhaseMsg] = useState<string | null>(null) // murmure a la reconfiguration
   const [purge, setPurge] = useState<number | null>(null) // % d'INTEGRITE restant a la purge
   const [noyauBeaten, setNoyauBeaten] = useState(saved.noyauBeaten) // boss final vaincu (persiste)
   const bossRef = useRef<Boss | null>(null)
@@ -1737,6 +1781,7 @@ export default function TapTap() {
       nextTell: 0,
       lastHit: 0,
       kind: cfg.kind,
+      phase: 1,
       tellSeed: 0,
       band: cfg.band,
       tellDmg: cfg.tellDmg,
@@ -1748,6 +1793,7 @@ export default function TapTap() {
     setBossIntegrite(100)
     setBossSignal(100)
     setBossTell(false)
+    setBossPhase(1)
     // Notice d'accueil : le combat est en pause tant que le joueur n'a pas lu la marche a suivre.
     bossIntroRef.current = true
     setBossIntro(true)
@@ -1830,7 +1876,10 @@ export default function TapTap() {
     if (!bossName || bossIntro) return
     const b = bossRef.current
     if (!b) return
-    b.nextTell = performance.now() + b.tellEvery
+    // En 2e phase les charges se rapprochent et raccourcissent.
+    const every = () => (b.phase === 2 ? b.tellEvery * PHASE2_EVERY : b.tellEvery)
+    const dur = () => (b.phase === 2 ? b.tellDur * PHASE2_DUR : b.tellDur)
+    b.nextTell = performance.now() + every()
     let raf = 0
     const loop = (now: number) => {
       if (b.tellUntil > 0) {
@@ -1838,11 +1887,11 @@ export default function TapTap() {
         if (now > b.tellUntil) {
           b.tellUntil = 0
           setBossTell(false)
-          b.nextTell = now + b.tellEvery
+          b.nextTell = now + every()
         }
       } else if (now > b.nextTell) {
         b.tellStart = now
-        b.tellUntil = now + b.tellDur
+        b.tellUntil = now + dur()
         // Orientation tiree a chaque charge : la lame du ROUAGE n'arrive jamais deux
         // fois du meme cote, on ne peut pas camper un coin de l'ecran.
         b.tellSeed = Math.random() * Math.PI * 2
@@ -1853,6 +1902,16 @@ export default function TapTap() {
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
   }, [bossName, bossIntro])
+
+  // Bascule en 2e phase : la borne l'annonce, brievement, en voix oracle.
+  useEffect(() => {
+    if (bossPhase !== 2 || !bossName) return
+    const line = BOSS_DEFS[stage.id]?.phase2 ?? ''
+    setPhaseMsg(line)
+    setSrMsg(`${bossName} se reconfigure. ${line} Le motif d'attaque a change.`)
+    const id = window.setTimeout(() => setPhaseMsg(null), 1800)
+    return () => window.clearTimeout(id)
+  }, [bossPhase, bossName, stage.id])
 
   // Timer traque : nettoye au demontage (pas de setState post-unmount).
   const trackedTimeout = useCallback((fn: () => void, ms: number) => {
@@ -1959,6 +2018,15 @@ export default function TapTap() {
           const dmg = b.tapDmg * Math.min(perf, 4) + (inTell ? 1 : 0)
           b.integrite = Math.max(0, b.integrite - dmg)
           setBossIntegrite(b.integrite)
+          // SECONDE PHASE : sous le seuil, le boss se reconfigure — charges plus
+          // rapprochees ET motif d'attaque different (cf. bossZones).
+          if (b.phase === 1 && b.integrite <= BOSS_PHASE2_AT && b.integrite > 0) {
+            b.phase = 2
+            b.tellUntil = 0 // la charge en cours s'interrompt : la bascule est nette
+            b.nextTell = now + 900 // court repit pour lire le nouveau motif
+            setBossTell(false)
+            setBossPhase(2)
+          }
           if (b.integrite <= 0) winBoss()
         }
         setScore((sc) => {
@@ -2169,13 +2237,61 @@ export default function TapTap() {
                 textShadow: '0 1px 8px rgba(5,1,13,0.9)',
               }}
             >
-              {(bossName && BOSS_DEFS[stage.id]?.hint) || "l'onde balaie — tape dans les creux"}
+              {(bossName &&
+                (bossPhase === 2 ? BOSS_DEFS[stage.id]?.hint2 : BOSS_DEFS[stage.id]?.hint)) ||
+                "l'onde balaie — tape dans les creux"}
             </div>
           </div>
         )}
 
         {/* Notice d'accueil du boss : qui il est + comment gagner (combat en pause). */}
         {bossName && bossIntro && <BossIntro name={bossName} reduced={reduced} />}
+
+        {/* RECONFIGURATION : le boss passe en 2e phase. Bref, mais il faut le LIRE —
+            le motif d'attaque vient de changer. */}
+        {phaseMsg && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              pointerEvents: 'none',
+              zIndex: 24,
+              fontFamily: 'ui-monospace, monospace',
+              textAlign: 'center',
+              padding: '0 8vw',
+              animation: reduced ? 'none' : 'tt-burst 1.8s ease-out',
+              background: 'rgba(255,59,48,0.10)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.28em',
+                color: PALETTE.red,
+                fontWeight: 700,
+              }}
+            >
+              RECONFIGURATION
+            </div>
+            <div
+              style={{
+                fontSize: 'clamp(15px, 5vw, 24px)',
+                fontWeight: 800,
+                letterSpacing: '0.04em',
+                color: '#ffffff',
+                textShadow: `0 0 18px ${PALETTE.red}`,
+              }}
+            >
+              {phaseMsg}
+            </div>
+          </div>
+        )}
 
         {/* PURGE : echec du combat. Un tap relance (gere par tapAt). */}
         {purge !== null && (

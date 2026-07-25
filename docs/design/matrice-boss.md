@@ -15,6 +15,18 @@
 >
 > **Y / θ / R : les trois axes de l'espace, un par moteur.** L'orientation de départ est **tirée à chaque charge** (`tellSeed`) — impossible de camper un coin de l'écran.
 >
+> ### Deux phases par boss
+>
+> Sous **50 % d'INTÉGRITÉ** (`BOSS_PHASE2_AT`) le boss se **reconfigure** : la charge en cours s'interrompt net, la borne murmure une ligne, et un court répit (900 ms) laisse lire le nouveau motif. Ensuite les charges se **rapprochent** (×0,62) et **raccourcissent** (×0,88) — mais surtout le **MOTIF change**, ce n'est pas juste « plus vite » :
+>
+> | Boss | Phase 2 | Murmure |
+> |---|---|---|
+> | **LA PORTEUSE** | **deux crêtes en tenaille** — l'une descend, l'autre remonte ; elles se croisent au centre à mi-charge | *elle se dédouble.* |
+> | **LE ROUAGE** | **deux lames diamétralement opposées** — un vrai tourniquet | *il engrène la seconde dent.* |
+> | **LE NOYAU** | **l'anneau IMPLOSE** au lieu d'enfler — la paroi revient vers le cœur | *le calcul s'inverse.* |
+>
+> Les positions dangereuses viennent d'**une seule fonction** (`bossZones`), lue à la fois par la mécanique et par le rendu : elles ne peuvent pas diverger.
+>
 > Règle de loyauté : la couche FX **dessine exactement ce que `bossInDanger()` teste** (même espace normalisé étiré). *Ce que tu vois est ce qui te touche.*
 >
 > **Charge = esquive SPATIALE** (choix Xavier) : taper **hors** de la zone rouge blesse le boss, taper **dedans** ronge ton SIGNAL. On garde le flux de tap — plus de « freeze ».

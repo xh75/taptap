@@ -22,6 +22,8 @@
 - ✅ MÉCANIQUES DIFFÉRENCIÉES par moteur — géométrie du danger propre à chaque boss :
   bande en Y (WAVEFORM) · secteur en θ (MANDALA) · anneau en R (LIQUID). Orientation tirée à
   chaque charge. La couche FX dessine exactement ce que `bossInDanger()` teste.
+- ✅ 2ᵉ PHASE par boss — sous 50 % d'INTÉGRITÉ le boss se reconfigure : charges plus rapprochées
+  (×0,62) et plus brèves (×0,88), et surtout MOTIF différent — tenaille (PORTEUSE), tourniquet
+  (ROUAGE), implosion (NOYAU). Annonce « RECONFIGURATION » + murmure oracle + répit de 900 ms.
   RESTE : résoudre visuellement le DÉCOR en entité (aujourd'hui seul WAVEFORM amplifie son onde ;
-  MANDALA et LIQUID gardent leur rendu ambiant pendant le combat) ; et la 2ᵉ phase par boss
-  (seuil d'INTÉGRITÉ qui accélère les tells / change le motif) reste à écrire.
+  MANDALA et LIQUID gardent leur rendu ambiant pendant le combat).
