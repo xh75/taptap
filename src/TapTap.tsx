@@ -82,25 +82,64 @@ const RING_RMAX = 0.38 // rayon max normalise de l'anneau
 // CHAQUE palier se termine par un boss ; la difficulte monte d'un boss a l'autre
 // (crete plus frequente, plus large, plus dcommageable ; INTEGRITE plus longue a vider).
 // Mecanique commune : esquive spatiale de la crete rouge (differenciation par moteur = a venir).
+// GEOMETRIE DU DANGER — chaque boss attaque selon l'axe de son propre moteur.
+// C'est ce qui les rend vraiment differents a jouer, pas juste plus durs :
+//   'band'   → WAVEFORM  : une crete horizontale balaie en Y      (l'axe des ondes)
+//   'sector' → MANDALA   : une lame radiale tourne en THETA        (l'axe des couronnes)
+//   'ring'   → LE NOYAU  : un anneau de calcul enfle en R          (l'axe de la profondeur)
+// Y / THETA / R : les trois axes de l'espace, un par moteur. Le geste d'esquive change
+// completement — fuir vers le haut/bas, tourner autour du centre, ou entrer/sortir.
+type BossKind = 'band' | 'sector' | 'ring'
+
 interface BossCfg {
   name: string
+  kind: BossKind
   tellEvery: number // ms entre deux charges
-  tellDur: number // ms de balayage de la crete
-  band: number // demi-hauteur normalisee de la crete dangereuse
-  tellDmg: number // SIGNAL perdu par tap dans la crete
+  tellDur: number // ms de balayage
+  band: number // demi-largeur de la zone dangereuse (Y normalise | radians | rayon normalise)
+  tellDmg: number // SIGNAL perdu par tap dans la zone
   tapDmg: number // INTEGRITE videe par tap (× perf) — plus bas = boss plus coriace
   iframe: number // ms d'invulnerabilite apres un coup encaisse
+  hint: string // consigne d'esquive affichee pendant la charge
 }
 const BOSS_DEFS: Record<number, BossCfg> = {
-  1: { name: 'LA PORTEUSE', tellEvery: 3200, tellDur: 1600, band: 0.16, tellDmg: 24, tapDmg: 0.22, iframe: 240 },
-  2: { name: 'LE ROUAGE', tellEvery: 2600, tellDur: 1520, band: 0.18, tellDmg: 28, tapDmg: 0.17, iframe: 220 },
-  3: { name: 'LE NOYAU', tellEvery: 2100, tellDur: 1440, band: 0.2, tellDmg: 32, tapDmg: 0.14, iframe: 200 },
+  1: {
+    name: 'LA PORTEUSE', kind: 'band',
+    tellEvery: 3200, tellDur: 1600, band: 0.16, tellDmg: 24, tapDmg: 0.22, iframe: 240,
+    hint: "l'onde balaie — tape dans les creux",
+  },
+  2: {
+    name: 'LE ROUAGE', kind: 'sector',
+    tellEvery: 2600, tellDur: 1520, band: 0.5, tellDmg: 28, tapDmg: 0.17, iframe: 220,
+    hint: 'la lame tourne — tape hors du secteur',
+  },
+  3: {
+    name: 'LE NOYAU', kind: 'ring',
+    tellEvery: 2100, tellDur: 1440, band: 0.1, tellDmg: 32, tapDmg: 0.14, iframe: 200,
+    hint: "l'anneau enfle — écarte-toi de la paroi",
+  },
 }
 
-// Position (y normalise) de la crete pendant une charge : elle balaie de haut en bas.
-function bossDangerY(tellStart: number, tellUntil: number, now: number): number {
-  const t = Math.min(1, Math.max(0, (now - tellStart) / (tellUntil - tellStart)))
-  return 0.18 + 0.64 * t
+// Avancement de la charge en cours (0 → 1).
+function bossTellT(b: Boss, now: number): number {
+  return Math.min(1, Math.max(0, (now - b.tellStart) / (b.tellUntil - b.tellStart)))
+}
+// Position courante de la zone dangereuse, selon l'axe du boss.
+const bandY = (t: number) => 0.18 + 0.64 * t // WAVEFORM : de haut en bas
+const sectorAngle = (b: Boss, t: number) => b.tellSeed + 2.2 * t // MANDALA : rotation
+const ringR = (t: number) => 0.1 + 0.52 * t // NOYAU : expansion depuis le centre
+
+// Le tap touche-t-il la zone dangereuse ? Teste EXACTEMENT ce que la couche FX dessine
+// (meme espace normalise etire) — ce que tu vois est ce qui te touche.
+function bossInDanger(b: Boss, nx: number, ny: number, now: number): boolean {
+  const t = bossTellT(b, now)
+  if (b.kind === 'band') return Math.abs(ny - bandY(t)) < b.band
+  const dx = nx - 0.5
+  const dy = ny - 0.5
+  if (b.kind === 'ring') return Math.abs(Math.hypot(dx, dy) - ringR(t)) < b.band
+  // 'sector' : ecart angulaire replie sur [-PI, PI]
+  const d = Math.atan2(dy, dx) - sectorAngle(b, t)
+  return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < b.band
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +703,8 @@ interface Boss {
   nextTell: number
   lastHit: number
   // Reglages du boss courant (copies depuis BOSS_DEFS a l'entree en combat).
+  kind: BossKind
+  tellSeed: number // orientation de depart de la charge (tiree a chaque tell : imprevisible)
   band: number
   tellDmg: number
   tapDmg: number
@@ -910,26 +951,87 @@ const FxCanvas = memo(function FxCanvas({
         ctx.shadowBlur = 0
       }
 
-      // Crete rouge du boss pendant une charge : la zone a NE PAS taper (elle balaie).
+      // ZONE DANGEREUSE du boss pendant une charge — la zone a NE PAS taper.
+      // Chaque boss a sa geometrie (Y / THETA / R). On dessine EXACTEMENT ce que
+      // bossInDanger() teste, dans le meme espace normalise etire.
       // Dessinee meme en reduced-motion : c'est une information de jeu essentielle.
       const bo = bossRef.current
       if (bo && bo.tellUntil > now) {
-        const cy = bossDangerY(bo.tellStart, bo.tellUntil, now) * h
-        const bandH = bo.band * h
-        const grd = ctx.createLinearGradient(0, cy - bandH, 0, cy + bandH)
-        grd.addColorStop(0, 'rgba(255,59,48,0)')
-        grd.addColorStop(0.5, 'rgba(255,59,48,0.5)')
-        grd.addColorStop(1, 'rgba(255,59,48,0)')
-        ctx.fillStyle = grd
-        ctx.fillRect(0, cy - bandH, w, bandH * 2)
-        ctx.strokeStyle = 'rgba(255,59,48,0.95)'
+        const t = bossTellT(bo, now)
+        const RED = 'rgba(255,59,48,'
+        ctx.strokeStyle = RED + '0.95)'
         ctx.lineWidth = 2 * ratio
         ctx.shadowBlur = 12 * ratio
-        ctx.shadowColor = 'rgba(255,59,48,0.95)'
-        ctx.beginPath()
-        ctx.moveTo(0, cy)
-        ctx.lineTo(w, cy)
-        ctx.stroke()
+        ctx.shadowColor = RED + '0.95)'
+
+        if (bo.kind === 'band') {
+          // WAVEFORM — crete horizontale qui balaie du haut vers le bas.
+          const cy = bandY(t) * h
+          const bandH = bo.band * h
+          const grd = ctx.createLinearGradient(0, cy - bandH, 0, cy + bandH)
+          grd.addColorStop(0, RED + '0)')
+          grd.addColorStop(0.5, RED + '0.5)')
+          grd.addColorStop(1, RED + '0)')
+          ctx.fillStyle = grd
+          ctx.fillRect(0, cy - bandH, w, bandH * 2)
+          ctx.beginPath()
+          ctx.moveTo(0, cy)
+          ctx.lineTo(w, cy)
+          ctx.stroke()
+        } else if (bo.kind === 'sector') {
+          // MANDALA — lame radiale qui tourne autour du centre. On la trace en espace
+          // normalise puis on l'etire : le bord visible est exactement le bord teste.
+          const a0 = sectorAngle(bo, t) - bo.band
+          const a1 = sectorAngle(bo, t) + bo.band
+          const R = 1.5 // deborde largement l'ecran : la lame va jusqu'aux bords
+          const pt = (a: number, r: number) => [(0.5 + Math.cos(a) * r) * w, (0.5 + Math.sin(a) * r) * h]
+          ctx.beginPath()
+          ctx.moveTo(0.5 * w, 0.5 * h)
+          for (let i = 0; i <= 24; i++) {
+            const [px, py] = pt(a0 + ((a1 - a0) * i) / 24, R)
+            ctx.lineTo(px, py)
+          }
+          ctx.closePath()
+          const grd = ctx.createRadialGradient(0.5 * w, 0.5 * h, 0, 0.5 * w, 0.5 * h, Math.max(w, h) * 0.75)
+          grd.addColorStop(0, RED + '0.55)')
+          grd.addColorStop(1, RED + '0.12)')
+          ctx.fillStyle = grd
+          ctx.fill()
+          // Aretes vives : les deux bords de la lame.
+          for (const a of [a0, a1]) {
+            const [px, py] = pt(a, R)
+            ctx.beginPath()
+            ctx.moveTo(0.5 * w, 0.5 * h)
+            ctx.lineTo(px, py)
+            ctx.stroke()
+          }
+        } else {
+          // LE NOYAU — anneau de calcul qui enfle depuis le centre. Le danger est la
+          // PAROI : on est sauf tout pres du coeur, ou loin dehors.
+          const r = ringR(t)
+          const rIn = Math.max(0, r - bo.band)
+          const rOut = r + bo.band
+          // Remplissage EXACT de la couronne : deux ellipses en regle even-odd. Un trait
+          // epais de largeur uniforme deborderait horizontalement (l'espace est etire) et
+          // teinterait en rouge une zone en realite sure — ce que tu vois DOIT etre ce
+          // qui te touche.
+          ctx.shadowBlur = 0
+          ctx.fillStyle = RED + '0.4)'
+          ctx.beginPath()
+          ctx.ellipse(0.5 * w, 0.5 * h, rOut * w, rOut * h, 0, 0, Math.PI * 2)
+          ctx.ellipse(0.5 * w, 0.5 * h, rIn * w, rIn * h, 0, 0, Math.PI * 2)
+          ctx.fill('evenodd')
+          // Parois vives : les bords exacts que la mecanique teste.
+          ctx.lineWidth = 2 * ratio
+          ctx.shadowBlur = 12 * ratio
+          ctx.strokeStyle = RED + '0.95)'
+          for (const rr of [rIn, rOut]) {
+            if (rr <= 0) continue
+            ctx.beginPath()
+            ctx.ellipse(0.5 * w, 0.5 * h, rr * w, rr * h, 0, 0, Math.PI * 2)
+            ctx.stroke()
+          }
+        }
         ctx.shadowBlur = 0
       }
 
@@ -1218,7 +1320,7 @@ const BOSS_BRIEF: Record<string, { role: string; oracle: string; steps: string[]
     oracle: 'il veut te ranger dans son ordre.',
     steps: [
       'tape sans relâche : chaque tap enraye son INTÉGRITÉ',
-      "la lame rouge balaie plus vite et plus large — tape dans les CREUX",
+      'une LAME rouge TOURNE autour du centre — tape hors du secteur',
       'un tap DANS la lame ronge ton SIGNAL ; à zéro, tu es purgé',
     ],
   },
@@ -1227,8 +1329,8 @@ const BOSS_BRIEF: Record<string, { role: string; oracle: string; steps: string[]
     oracle: "il calcule ta destruction. c'est la dernière couche.",
     steps: [
       'tape sans relâche : chaque tap fissure son INTÉGRITÉ',
-      "l'onde de calcul rouge est rapide et épaisse — tape dans les CREUX",
-      'un tap DANS l\'onde ronge ton SIGNAL ; à zéro, tu es purgé',
+      "un ANNEAU rouge ENFLE depuis le centre — seule sa PAROI blesse : écarte-t'en",
+      "un tap SUR l'anneau ronge ton SIGNAL ; à zéro, tu es purgé",
     ],
   },
 }
@@ -1634,6 +1736,8 @@ export default function TapTap() {
       tellStart: 0,
       nextTell: 0,
       lastHit: 0,
+      kind: cfg.kind,
+      tellSeed: 0,
       band: cfg.band,
       tellDmg: cfg.tellDmg,
       tapDmg: cfg.tapDmg,
@@ -1739,6 +1843,9 @@ export default function TapTap() {
       } else if (now > b.nextTell) {
         b.tellStart = now
         b.tellUntil = now + b.tellDur
+        // Orientation tiree a chaque charge : la lame du ROUAGE n'arrive jamais deux
+        // fois du meme cote, on ne peut pas camper un coin de l'ecran.
+        b.tellSeed = Math.random() * Math.PI * 2
         setBossTell(true)
       }
       raf = requestAnimationFrame(loop)
@@ -1839,7 +1946,7 @@ export default function TapTap() {
       const b = bossRef.current
       if (b) {
         const inTell = b.tellUntil > now
-        const inCrest = inTell && Math.abs(ny - bossDangerY(b.tellStart, b.tellUntil, now)) < b.band
+        const inCrest = inTell && bossInDanger(b, nx, ny, now)
         if (inCrest) {
           if (now > b.lastHit + b.iframe) {
             b.signal = Math.max(0, b.signal - b.tellDmg)
@@ -2062,7 +2169,7 @@ export default function TapTap() {
                 textShadow: '0 1px 8px rgba(5,1,13,0.9)',
               }}
             >
-              l'onde balaie — tape dans les creux
+              {(bossName && BOSS_DEFS[stage.id]?.hint) || "l'onde balaie — tape dans les creux"}
             </div>
           </div>
         )}

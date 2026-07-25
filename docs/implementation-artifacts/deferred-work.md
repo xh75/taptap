@@ -19,6 +19,9 @@
 
 - ✅ Boss LE ROUAGE (palier 2) et LE NOYAU (palier 3) EN PLACE — chaque palier a un boss (BOSS_DEFS),
   difficulté croissante, notice d'accueil dédiée, finale « fin ouverte » (DÉLIVRÉ) après LE NOYAU.
-  RESTE : différencier la MÉCANIQUE par moteur (LE ROUAGE = secteur radial temporisé sur MANDALA ;
-  LE NOYAU = séquence type Simon + EMP sur LIQUID) et résoudre visuellement le décor en entité
-  (aujourd'hui seul WAVEFORM amplifie son onde ; MANDALA/LIQUID gardent la crête overlay commune).
+- ✅ MÉCANIQUES DIFFÉRENCIÉES par moteur — géométrie du danger propre à chaque boss :
+  bande en Y (WAVEFORM) · secteur en θ (MANDALA) · anneau en R (LIQUID). Orientation tirée à
+  chaque charge. La couche FX dessine exactement ce que `bossInDanger()` teste.
+  RESTE : résoudre visuellement le DÉCOR en entité (aujourd'hui seul WAVEFORM amplifie son onde ;
+  MANDALA et LIQUID gardent leur rendu ambiant pendant le combat) ; et la 2ᵉ phase par boss
+  (seuil d'INTÉGRITÉ qui accélère les tells / change le motif) reste à écrire.

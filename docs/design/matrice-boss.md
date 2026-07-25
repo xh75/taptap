@@ -1,9 +1,23 @@
 # TAP·TAP — Matrice des paliers & boss
 
-> **Statut** (2026-07-13) : cadre narratif **V3 · L'Intrus**, combat **réel avec échec**, signal **rouge = menace**.
-> **LES TROIS BOSS SONT EN PLACE** — chaque palier se termine par un boss : **LA PORTEUSE** (niv 1), **LE ROUAGE** (niv 2), **LE NOYAU** (niv 3, finale « fin ouverte » → DÉLIVRÉ). Chacun a son identité (nom, notice d'accueil, voix). **Mécanique de combat commune** (esquive de la crête) ; la différenciation par moteur (secteur radial du ROUAGE, séquence EMP du NOYAU décrites plus bas) reste à venir.
+> **Statut** (2026-07-25) : cadre narratif **V3 · L'Intrus**, combat **réel avec échec**, signal **rouge = menace**.
+> **LES TROIS BOSS SONT EN PLACE ET MÉCANIQUEMENT DIFFÉRENCIÉS.**
 >
-> **Charge = esquive SPATIALE** (choix Xavier) : pendant le *tell*, une **crête rouge balaie** l'écran de haut en bas ; taper **dans les creux** (loin d'elle) blesse le boss, taper **dans la crête** ronge ton SIGNAL. On garde le flux de tap — plus de « freeze ».
+> ### La géométrie du danger — un axe par moteur
+>
+> Chaque boss attaque selon **l'axe de son propre moteur de rendu**. C'est ce qui les rend différents à *jouer*, pas seulement plus durs : le geste d'esquive change complètement.
+>
+> | Boss | Moteur | Axe | Danger | Esquive |
+> |---|---|---|---|---|
+> | **LA PORTEUSE** | WAVEFORM (SVG) | **Y** | une **crête horizontale** balaie de haut en bas | fuir vers le haut / le bas |
+> | **LE ROUAGE** | MANDALA (Canvas) | **θ** | une **lame radiale** tourne autour du centre | tourner autour du centre |
+> | **LE NOYAU** | LIQUID (WebGL) | **R** | un **anneau** enfle depuis le centre | s'écarter de la paroi, qui te traverse |
+>
+> **Y / θ / R : les trois axes de l'espace, un par moteur.** L'orientation de départ est **tirée à chaque charge** (`tellSeed`) — impossible de camper un coin de l'écran.
+>
+> Règle de loyauté : la couche FX **dessine exactement ce que `bossInDanger()` teste** (même espace normalisé étiré). *Ce que tu vois est ce qui te touche.*
+>
+> **Charge = esquive SPATIALE** (choix Xavier) : taper **hors** de la zone rouge blesse le boss, taper **dedans** ronge ton SIGNAL. On garde le flux de tap — plus de « freeze ».
 >
 > **Difficulté croissante d'un boss à l'autre** (BOSS_DEFS) : crête plus fréquente, plus large et plus dommageable, INTÉGRITÉ plus longue à vider.
 > · LA PORTEUSE : tell 3,2 s / 1,6 s, bande 0,16, dégât crête 24, dégât/tap 0,22×perf, i-frame 240 ms.
