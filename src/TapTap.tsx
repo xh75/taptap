@@ -778,6 +778,18 @@ interface Celeb {
   tier: number
 }
 const CELEB_LIFE = 760 // ms
+
+// GRAMMAIRE POSITIF / NEGATIF (demande Xavier : distinguer clairement les deux).
+// Le positif S'OUVRE, MONTE, s'illumine, se colore (corolle organique, etiquettes
+// qui montent, voiles de lumiere). Le negatif SE REFERME, DESCEND, s'assombrit,
+// vire au rouge : au point touche, une FRACTURE — eclats anguleux rouges qui
+// IMPLOSENT + une tache sombre qui retire brievement la lumiere du moteur.
+interface Hit {
+  x: number
+  y: number
+  born: number
+}
+const HIT_LIFE = 420 // ms — sec et brutal, la ou la corolle est ample et douce
 interface Boss {
   integrite: number
   signal: number
@@ -831,6 +843,7 @@ const FxCanvas = memo(function FxCanvas({
   impactsRef,
   ignitesRef,
   celebsRef,
+  hitsRef,
   multRef,
   lastTapRef,
   bossRef,
@@ -840,6 +853,7 @@ const FxCanvas = memo(function FxCanvas({
   impactsRef: Ref<Impact[]>
   ignitesRef: Ref<Ignite[]>
   celebsRef: Ref<Celeb[]>
+  hitsRef: Ref<Hit[]>
   multRef: Ref<number>
   lastTapRef: Ref<number>
   bossRef: Ref<Boss | null>
@@ -1035,6 +1049,51 @@ const FxCanvas = memo(function FxCanvas({
         ctx.shadowBlur = 0
       }
 
+      // FRACTURE de degat : l'anti-corolle. La ou la recompense s'ouvre en branches
+      // organiques teintees, le degat se REFERME en eclats anguleux rouges, et une
+      // tache sombre retire brievement la lumiere du moteur au point touche.
+      const hits = hitsRef.current
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const ht = hits[i]
+        const age = now - ht.born
+        if (age > HIT_LIFE) {
+          hits.splice(i, 1)
+          continue
+        }
+        if (age < 0) continue
+        const p = age / HIT_LIFE
+        const hx = ht.x * w
+        const hy = ht.y * h
+        // Pseudo-aleatoire stable par eclat (seme par l'instant du coup).
+        const pr = (k: number) => {
+          const v = Math.sin(ht.born * 0.37 + k * 12.9898) * 43758.5453
+          return v - Math.floor(v)
+        }
+        // 1. La lumiere se retire : tache sombre qui guerit en se resorbant.
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = `rgba(5,5,6,${0.55 * (1 - p)})`
+        ctx.beginPath()
+        ctx.arc(hx, hy, s * 0.13 * (1 - p * 0.35), 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalCompositeOperation = 'lighter'
+        // 2. Les eclats : anguleux, irreguliers, en IMPLOSION (ils se referment).
+        const rOut = s * 0.16 * (1 - p * 0.55)
+        const a = 1 - p
+        ctx.strokeStyle = `rgba(255,59,48,${a})`
+        ctx.lineWidth = 2 * ratio
+        ctx.shadowBlur = reduced ? 0 : 6 * ratio
+        ctx.shadowColor = `rgba(255,59,48,${a})`
+        for (let k = 0; k < 9; k++) {
+          const ang = (k / 9) * Math.PI * 2 + pr(k) * 0.7
+          const len = rOut * (0.55 + 0.5 * pr(k + 9))
+          ctx.beginPath()
+          ctx.moveTo(hx + Math.cos(ang) * len, hy + Math.sin(ang) * len)
+          ctx.lineTo(hx + Math.cos(ang) * len * 0.3, hy + Math.sin(ang) * len * 0.3)
+          ctx.stroke()
+        }
+        ctx.shadowBlur = 0
+      }
+
       // ZONE DANGEREUSE du boss pendant une charge — la zone a NE PAS taper.
       // Chaque boss a sa geometrie (Y / THETA / R). On dessine EXACTEMENT ce que
       // bossInDanger() teste, dans le meme espace normalise etire.
@@ -1132,7 +1191,7 @@ const FxCanvas = memo(function FxCanvas({
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [ringsRef, impactsRef, ignitesRef, celebsRef, multRef, lastTapRef, bossRef, reducedRef])
+  }, [ringsRef, impactsRef, ignitesRef, celebsRef, hitsRef, multRef, lastTapRef, bossRef, reducedRef])
 
   return (
     <canvas
@@ -1229,6 +1288,7 @@ function Gauge({
   beat,
   tier,
   victory,
+  hit,
   reduced,
 }: {
   pct: number // 0..100 — TOUJOURS « ma progression vers le but »
@@ -1239,12 +1299,16 @@ function Gauge({
   beat: number
   tier: number // palier de performance (1..4) — pilote les assets de combo
   victory: number // compteur : s'incremente sur une victoire notable (seuil, boss)
+  hit: number // compteur : s'incremente a chaque coup encaisse (flash rouge)
   reduced: boolean
 }) {
   const v = Math.min(100, Math.max(0, pct))
   const rounded = Math.round(v)
   const hot = v > 80 // seuil/mise a mort imminente → vert (cf. palette : vert = franchissement)
-  const pipsLit = signal === null ? 0 : Math.ceil((signal / 100) * SIGNAL_PIPS)
+  // Arrondi au plus proche (pas ceil) : le PREMIER coup encaisse eteint deja un plot.
+  // Un degat invisible sur la jauge serait un evenement negatif illisible.
+  const pipsLit =
+    signal === null ? 0 : signal <= 0 ? 0 : Math.max(1, Math.round((signal / 100) * SIGNAL_PIPS))
   const lowSignal = signal !== null && pipsLit <= 1
 
   return (
@@ -1369,6 +1433,20 @@ function Gauge({
                 pointerEvents: 'none',
                 background: PALETTE.green,
                 animation: 'tt-burst 0.7s ease-out',
+              }}
+            />
+          )}
+          {/* COUP ENCAISSE : la jauge saigne — flash rouge sec (grammaire du negatif). */}
+          {hit > 0 && !reduced && (
+            <div
+              key={`h${hit}`}
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                background: PALETTE.red,
+                animation: 'tt-burst 0.4s ease-out',
               }}
             />
           )}
@@ -1718,6 +1796,7 @@ export default function TapTap() {
   const [bossIntro, setBossIntro] = useState(false) // notice d'accueil : le combat attend le 1er tap
   const [bossPhase, setBossPhase] = useState(1) // 2 = le boss s'est reconfigure (motif different)
   const [phaseMsg, setPhaseMsg] = useState<string | null>(null) // murmure a la reconfiguration
+  const [dmgSeq, setDmgSeq] = useState(0) // s'incremente a chaque coup ENCAISSE (voile rouge + jauge)
   const [purge, setPurge] = useState<number | null>(null) // % d'INTEGRITE restant a la purge
   const [noyauBeaten, setNoyauBeaten] = useState(saved.noyauBeaten) // boss final vaincu (persiste)
   const bossRef = useRef<Boss | null>(null)
@@ -1737,6 +1816,7 @@ export default function TapTap() {
   const impactsRef = useRef<Impact[]>([]) // flashs d'impact (couche FX)
   const ignitesRef = useRef<Ignite[]>([]) // embrasements (couche FX, reserve au combat)
   const celebsRef = useRef<Celeb[]>([]) // corolles de recompense (franchissement de palier)
+  const hitsRef = useRef<Hit[]>([]) // fractures de degat (couche FX, grammaire du negatif)
   const tierRef = useRef(1) // palier courant de la serie — declenche la CELEBRATION (visuel)
   // Palier le plus haut ayant deja paye son bonus de FLUX sur CETTE montee. Distinct de
   // tierRef : sinon hacher son rythme (pause + 3 taps rapides) re-armerait le bonus en
@@ -2070,10 +2150,20 @@ export default function TapTap() {
             b.signal = Math.max(0, b.signal - b.tellDmg)
             b.lastHit = now
             setBossSignal(b.signal)
+            // Grammaire du NEGATIF : fracture au doigt + voile rouge + flash de jauge.
+            hitsRef.current.push({ x: nx, y: ny, born: now })
+            if (hitsRef.current.length > 5) hitsRef.current.shift()
+            setDmgSeq((n) => n + 1)
             pushLabel(nx, ny, '−signal', 'noise')
             if (b.signal <= 0) purgeBoss()
           }
         } else {
+          // Coup PENDANT la charge, place dans une zone sure : le courage crepite —
+          // un eclair blanc recompense la prise de risque (et le +1 d'INTEGRITE).
+          if (inTell) {
+            ignitesRef.current.push({ x: nx, y: ny, rad: 0.055, born: now, kind: 'inter' })
+            if (ignitesRef.current.length > 8) ignitesRef.current.shift()
+          }
           const dmg = b.tapDmg * Math.min(perf, 4) + (inTell ? 1 : 0)
           b.integrite = Math.max(0, b.integrite - dmg)
           setBossIntegrite(b.integrite)
@@ -2235,6 +2325,7 @@ export default function TapTap() {
           impactsRef={impactsRef}
           ignitesRef={ignitesRef}
           celebsRef={celebsRef}
+          hitsRef={hitsRef}
           multRef={multRef}
           lastTapRef={lastTapRef}
           bossRef={bossRef}
@@ -2261,7 +2352,10 @@ export default function TapTap() {
               fontWeight: 700,
               letterSpacing: '0.02em',
               textShadow: '0 1px 6px rgba(5,1,13,0.9)',
-              animation: reduced ? 'none' : 'tt-float 0.8s ease-out forwards',
+              // Grammaire directionnelle : les gains MONTENT, les pertes TOMBENT.
+              animation: reduced
+                ? 'none'
+                : `${l.kind === 'noise' ? 'tt-fall' : 'tt-float'} 0.8s ease-out forwards`,
               pointerEvents: 'none',
               zIndex: 13,
               whiteSpace: 'nowrap',
@@ -2270,6 +2364,25 @@ export default function TapTap() {
             {l.text}
           </div>
         ))}
+
+        {/* VOILE DE DEGAT : un coup encaisse assombrit et rougit l'ecran, une fois,
+            sec — a distinguer du lisere continu de la charge, qui n'est qu'un
+            AVERTISSEMENT. Ici, la lumiere se retire : tu as ete touche. */}
+        {dmgSeq > 0 && !reduced && (
+          <div
+            key={`dmg${dmgSeq}`}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 15,
+              background: 'rgba(5,5,6,0.22)',
+              boxShadow: `inset 0 0 90px 24px rgba(255,59,48,0.65)`,
+              animation: 'tt-dmg 0.45s ease-out forwards',
+            }}
+          />
+        )}
 
         {/* Charge du boss : bord rouge pulsant — le danger. NE PAS taper. */}
         {bossTell && (
@@ -2458,6 +2571,7 @@ export default function TapTap() {
             beat={beat}
             tier={Math.min(4, Math.max(1, Math.round(mult)))}
             victory={victory}
+            hit={dmgSeq}
             reduced={reduced}
           />
         </div>
@@ -2529,6 +2643,17 @@ const KEYFRAMES = `
   0% { opacity: 0; transform: translate(-50%, -80%); }
   20% { opacity: 1; }
   100% { opacity: 0; transform: translate(-50%, -240%); }
+}
+/* Grammaire du negatif : les pertes TOMBENT (les gains montent via tt-float). */
+@keyframes tt-fall {
+  0% { opacity: 0; transform: translate(-50%, -80%); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, 90%); }
+}
+/* Voile de degat : la lumiere se retire, une fois, sec. */
+@keyframes tt-dmg {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
 }
 /* Asset de COMBO : une onde teintee balaie la jauge au passage d'un palier de perf. */
 @keyframes tt-sweep {

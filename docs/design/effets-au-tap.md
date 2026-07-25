@@ -76,6 +76,28 @@ chaque tap — on *voit* la barre pousser sans quitter le visuel des yeux.
 La célébration ne se déclenche **qu'à la montée**, jamais en redescendant : le jeu célèbre,
 il ne sanctionne pas.
 
+## Grammaire positif / négatif (2026-07-25)
+
+> Demande Xavier : « que l'utilisateur distingue clairement un événement négatif d'un positif. »
+
+Deux pôles stricts, opposés terme à terme — la forme, la direction, la lumière et la couleur
+disent la même chose en même temps :
+
+| | **POSITIF** | **NÉGATIF** |
+|---|---|---|
+| Forme | **corolle organique** qui S'OUVRE (branches rayonnantes) | **fracture anguleuse** qui SE REFERME (éclats en implosion) |
+| Direction | les étiquettes **montent** (`tt-float`) | les étiquettes **tombent** (`tt-fall`) |
+| Lumière | voile/bloom qui **s'ajoute** | tache sombre au point touché + voile qui **assombrit** l'écran |
+| Couleur | blanc → teinte du palier → vert | **rouge**, toujours |
+| Jauge | onde teintée qui balaie · embrasement vert | **flash rouge sec** + un plot de SIGNAL s'éteint **dès le premier coup** (arrondi au plus proche — un dégât invisible serait illisible) |
+
+Distinction fine côté rouge : le **liseré pulsant continu** = *avertissement* (une charge est
+en cours) ; le **voile sec one-shot + fracture** = *dégât* (tu as été touché). Deux rythmes,
+deux sens.
+
+Récompense de courage : toucher le boss **pendant** sa charge, depuis une zone sûre, fait
+crépiter un **éclair blanc** au doigt (et paie +1 d'INTÉGRITÉ) — le risque bien pris se voit.
+
 ## La jauge respire au tempo
 
 À chaque tap **dans la cadence**, un glow cyan pulse sur la jauge FLUX (`tt-beat`). C'est l'unique indice de découverte de la CADENCE : quand tu trouves ton rythme, la jauge respire avec toi (pas de métronome imposé).
